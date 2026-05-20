@@ -40,10 +40,6 @@ export async function showCampaignDetail(ctx: BotContext, id: number, edit = tru
   const status = cmp.is_active
     ? `${e("✅", E.ACTIVE)} Активна`
     : `${e("🚫", E.STOPPED)} Остановлена`;
-  const sched =
-    cmp.schedule_type === "simple"
-      ? `Ежедневно в ${cmp.schedule_value}`
-      : "Подробное расписание";
   const chNames = channels.length
     ? channels.map((c) => c.title || c.username || c.chat_id).join(", ")
     : "—";
@@ -52,7 +48,6 @@ export async function showCampaignDetail(ctx: BotContext, id: number, edit = tru
     `${e("🔗", E.CAMPAIGN)} <b>${cmp.name}</b>`,
     "",
     `${status}`,
-    `${e("🕓", E.SCHEDULE)} Расписание: ${sched}`,
     `${e("🕓", E.SCHEDULE)} Дефолт-время плана: ${cmp.default_time}`,
     `${e("📢", E.CHANNELS)} Каналы: ${chNames}`,
     `${e("📨", E.AUTOSPAM)} Автоспам: ${bPosts.length} постов`,
@@ -65,8 +60,6 @@ export async function showCampaignDetail(ctx: BotContext, id: number, edit = tru
     .text(`План постов (${pPosts.length})`, `pp:list:${id}`).icon(E.PLAN)
     .row()
     .text(`Каналы (${channels.length})`, `cmpch:list:${id}`).icon(E.CHANNELS)
-    .row()
-    .text("Расписание", `cmp:sched:${id}`).icon(E.SCHEDULE)
     .row()
     .text("Дефолт-время", `cmp:deftime:${id}`).icon(E.SCHEDULE)
     .row();
