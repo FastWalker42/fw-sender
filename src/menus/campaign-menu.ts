@@ -151,7 +151,7 @@ export async function showBroadcastPosts(ctx: BotContext, cmpId: number, edit = 
   const kb = new InlineKeyboard();
   for (const p of posts) {
     const remaining = p.total_days - p.days_sent;
-    kb.text(`${p.label} (${remaining} дн.)`, `bp:${p.id}`).icon(E.FILE).row();
+    kb.text(`${p.label} (${p.send_time}, ${remaining} дн.)`, `bp:${p.id}`).icon(E.FILE).row();
   }
   kb.text("Добавить пост", `bp:add:${cmpId}`).icon(E.ADD).row();
   kb.text("Назад", `cmp:${cmpId}`).icon(E.BACK).row();
