@@ -15,7 +15,7 @@ const bc = (ctx: Context) => ctx as BotContext;
 /* ─────────────── Campaign Schedule ────────────────────────── */
 
 export async function scheduleConversation(conversation: Conv, ctx: BotContext) {
-  const cmpId = Number(ctx.session.convPayload);
+  const cmpId = await conversation.external((ctx) => Number((ctx as BotContext).session.convPayload));
   if (!cmpId) return;
 
   const bot = BOT_USERNAME;
@@ -24,10 +24,10 @@ export async function scheduleConversation(conversation: Conv, ctx: BotContext) 
   if (bot) {
     const twTime = tgwidget(bot).date({ mode: "time" }).style({ liquidGlass: true, adoptTgPalette: true });
     const twSched = tgwidget(bot).schedule({ format: "single" }).style({ liquidGlass: true, adoptTgPalette: true });
-    kb.webApp("🕓 Простое время", twTime.url()).row();
-    kb.webApp("📁 Подробное расписание", twSched.url()).row();
+    kb.webApp("Простое время", twTime.url()).icon(E.SCHEDULE).row();
+    kb.webApp("Подробное расписание", twSched.url()).icon(E.FILE).row();
   }
-  kb.text("🚫 Отменить", "conv:cancel").row();
+  kb.text("Отменить", "conv:cancel").icon(E.CANCEL).row();
 
   await ctx.editMessageText(
     `${e("🕓", E.SCHEDULE)} <b>Выберите тип расписания</b>\n\n` +
@@ -110,7 +110,7 @@ export async function scheduleConversation(conversation: Conv, ctx: BotContext) 
 /* ─────────────── Campaign Default Time ───────────────────── */
 
 export async function defaultTimeConversation(conversation: Conv, ctx: BotContext) {
-  const cmpId = Number(ctx.session.convPayload);
+  const cmpId = await conversation.external((ctx) => Number((ctx as BotContext).session.convPayload));
   if (!cmpId) return;
 
   const bot = BOT_USERNAME;
@@ -118,9 +118,9 @@ export async function defaultTimeConversation(conversation: Conv, ctx: BotContex
 
   const kb = new InlineKeyboard();
   if (widget) {
-    kb.webApp("🕓 Выбрать время", widget.url()).row();
+    kb.webApp("Выбрать время", widget.url()).icon(E.SCHEDULE).row();
   }
-  kb.text("🚫 Отменить", "conv:cancel").row();
+  kb.text("Отменить", "conv:cancel").icon(E.CANCEL).row();
 
   const pattern = widget?.pattern || "ЧЧ:ММ";
   await ctx.editMessageText(
@@ -182,7 +182,7 @@ export async function defaultTimeConversation(conversation: Conv, ctx: BotContex
 /* ─────────────── Plan Post Date/Time ─────────────────────── */
 
 export async function planDatetimeConversation(conversation: Conv, ctx: BotContext) {
-  const postId = Number(ctx.session.convPayload);
+  const postId = await conversation.external((ctx) => Number((ctx as BotContext).session.convPayload));
   if (!postId) return;
 
   const post = db.getPlanPost(postId);
@@ -193,10 +193,10 @@ export async function planDatetimeConversation(conversation: Conv, ctx: BotConte
 
   const kb = new InlineKeyboard();
   if (widget) {
-    kb.webApp("🕓 Дата и время", widget.url()).row();
+    kb.webApp("Дата и время", widget.url()).icon(E.SCHEDULE).row();
   }
-  kb.text("🤖 АВТО", "conv:auto").row();
-  kb.text("🚫 Отменить", "conv:cancel").row();
+  kb.text("АВТО", "conv:auto").icon(E.ROBOT).row();
+  kb.text("Отменить", "conv:cancel").icon(E.CANCEL).row();
 
   const pattern = widget?.pattern || "ГГГГ-ММ-ДД ЧЧ:ММ";
   await ctx.editMessageText(

@@ -58,7 +58,7 @@ export async function handleCallback(ctx: BotContext) {
 
   if (data === "ch:add") {
     setAwaiting(ctx.from!.id, { action: "add_channel" });
-    const kb = new InlineKeyboard().text("🚫 Отмена", "channels:list");
+    const kb = new InlineKeyboard().text("Отмена", "channels:list").icon(E.CANCEL);
     return ctx.editMessageText(
       `${e("📢", E.CHANNELS)} <b>Добавление канала</b>\n\n` +
         "Отправьте:\n" +
@@ -88,7 +88,7 @@ export async function handleCallback(ctx: BotContext) {
 
   if (data === "cmp:add") {
     setAwaiting(ctx.from!.id, { action: "name_campaign" });
-    const kb = new InlineKeyboard().text("🚫 Отмена", "campaigns:list");
+    const kb = new InlineKeyboard().text("Отмена", "campaigns:list").icon(E.CANCEL);
     return ctx.editMessageText(`${e("🔗", E.CAMPAIGN)} Введите название кампании:`, {
       reply_markup: kb,
       parse_mode: "HTML",
@@ -105,7 +105,7 @@ export async function handleCallback(ctx: BotContext) {
   if (data.startsWith("cmp:rename:")) {
     const id = parseId(data, 2);
     setAwaiting(ctx.from!.id, { action: "rename_campaign", id });
-    const kb = new InlineKeyboard().text("🚫 Отмена", `cmp:${id}`);
+    const kb = new InlineKeyboard().text("Отмена", `cmp:${id}`).icon(E.CANCEL);
     return ctx.editMessageText(`${e("🔨", E.RENAME)} Введите новое название:`, {
       reply_markup: kb,
       parse_mode: "HTML",
@@ -117,8 +117,8 @@ export async function handleCallback(ctx: BotContext) {
     const cmp = db.getCampaign(id);
     if (!cmp) return;
     const kb = new InlineKeyboard()
-      .text("✅ Да", `cmp:confirmdel:${id}`)
-      .text("🚫 Нет", `cmp:${id}`);
+      .text("Да", `cmp:confirmdel:${id}`).icon(E.CONFIRM)
+      .text("Нет", `cmp:${id}`).icon(E.CANCEL);
     return ctx.editMessageText(`Удалить кампанию <b>${cmp.name}</b> со всеми данными?`, {
       reply_markup: kb,
       parse_mode: "HTML",
@@ -173,7 +173,7 @@ export async function handleCallback(ctx: BotContext) {
   if (data.startsWith("bp:add:")) {
     const cmpId = parseId(data, 2);
     setAwaiting(ctx.from!.id, { action: "add_broadcast_post", id: cmpId });
-    const kb = new InlineKeyboard().text("✅ Готово", `bp:list:${cmpId}`);
+    const kb = new InlineKeyboard().text("Готово", `bp:list:${cmpId}`).icon(E.CONFIRM);
     return ctx.editMessageText(
       `${e("📨", E.AUTOSPAM)} Отправьте пост(ы) для автоспама.\nПо окончании нажмите «Готово».`,
       { reply_markup: kb, parse_mode: "HTML" },
@@ -209,7 +209,7 @@ export async function handleCallback(ctx: BotContext) {
   if (data.startsWith("pp:add:")) {
     const cmpId = parseId(data, 2);
     setAwaiting(ctx.from!.id, { action: "add_plan_post", id: cmpId });
-    const kb = new InlineKeyboard().text("✅ Готово", `pp:list:${cmpId}`);
+    const kb = new InlineKeyboard().text("Готово", `pp:list:${cmpId}`).icon(E.CONFIRM);
     return ctx.editMessageText(
       `${e("📥", E.PLAN)} Отправьте пост(ы) для плана.\nПо окончании нажмите «Готово».`,
       { reply_markup: kb, parse_mode: "HTML" },
