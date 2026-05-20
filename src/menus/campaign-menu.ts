@@ -151,7 +151,8 @@ export async function showBroadcastPosts(ctx: BotContext, cmpId: number, edit = 
 
   const kb = new InlineKeyboard();
   for (const p of posts) {
-    kb.text(p.label, `bp:${p.id}`).icon(E.FILE).row();
+    const remaining = p.total_days - p.days_sent;
+    kb.text(`${p.label} (${remaining} дн.)`, `bp:${p.id}`).icon(E.FILE).row();
   }
   kb.text("Добавить пост", `bp:add:${cmpId}`).icon(E.ADD).row();
   kb.text("Назад", `cmp:${cmpId}`).icon(E.BACK).row();
@@ -160,7 +161,6 @@ export async function showBroadcastPosts(ctx: BotContext, cmpId: number, edit = 
     `${e("📨", E.AUTOSPAM)} <b>Автоспам «${cmp.name}»</b>`,
     "",
     `Постов: ${posts.length}`,
-    posts.length ? "\nБот выбирает случайный пост без повторов подряд." : "",
   ].join("\n");
 
   if (edit && ctx.callbackQuery) {
@@ -182,8 +182,16 @@ export async function showBroadcastPostDetail(ctx: BotContext, postId: number) {
     .text("Назад", `bp:list:${post.campaign_id}`).icon(E.BACK)
     .row();
 
+  const remaining = post.total_days - post.days_sent;
+
   await ctx.editMessageText(
-    `${e("📁", E.FILE)} <b>${post.label}</b>\n\nПозиция: ${post.position + 1}`,
+    [
+      `${e("📁", E.FILE)} <b>${post.label}</b>`,
+      "",
+      `Позиция: ${post.position + 1}`,
+      `${e("🕓", E.SCHEDULE)} Время: ${post.send_time}`,
+      `Осталось дней: ${remaining}`,
+    ].join("\n"),
     { reply_markup: kb, parse_mode: "HTML" },
   );
 }

@@ -28,7 +28,7 @@ export interface CampaignChannel {
   channel_id: number;
 }
 
-/** Auto-broadcast post (randomly selected, no repeats) */
+/** Auto-broadcast post with individual schedule */
 export interface BroadcastPost {
   id: number;
   campaign_id: number;
@@ -36,6 +36,9 @@ export interface BroadcastPost {
   message_id: number;
   label: string;
   position: number;
+  send_time: string;
+  total_days: number;
+  days_sent: number;
   created_at: string;
 }
 

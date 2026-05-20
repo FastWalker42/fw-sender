@@ -22,6 +22,12 @@ import * as db from "../db";
 interface AwaitState {
   action: string;
   id?: number;
+  pending?: {
+    chatId: string;
+    messageId: number;
+    label: string;
+    days?: number;
+  };
 }
 
 const awaiting = new Map<number, AwaitState>();
@@ -173,9 +179,9 @@ export async function handleCallback(ctx: BotContext) {
   if (data.startsWith("bp:add:")) {
     const cmpId = parseId(data, 2);
     setAwaiting(ctx.from!.id, { action: "add_broadcast_post", id: cmpId });
-    const kb = new InlineKeyboard().text("Готово", `bp:list:${cmpId}`).icon(E.CONFIRM);
+    const kb = new InlineKeyboard().text("Отмена", `bp:list:${cmpId}`).icon(E.CANCEL);
     return ctx.editMessageText(
-      `${e("📨", E.AUTOSPAM)} Отправьте пост(ы) для автоспама.\nПо окончании нажмите «Готово».`,
+      `${e("📨", E.AUTOSPAM)} Отправьте пост для автоспама:`,
       { reply_markup: kb, parse_mode: "HTML" },
     );
   }

@@ -1,5 +1,4 @@
 import type { Api } from "grammy";
-import { parseSchedule } from "tgwidget";
 import { ADMIN_IDS } from "../config";
 import { e, E } from "../utils/emoji";
 import * as db from "../db";
@@ -77,46 +76,22 @@ async function processBroadcasts(api: Api) {
   const hh = String(now.getHours()).padStart(2, "0");
   const mm = String(now.getMinutes()).padStart(2, "0");
   const currentTime = `${hh}:${mm}`;
-  const dayIndex = now.getDay();
 
-  const campaigns = db.getActiveCampaigns();
+  const duePosts = db.getDueBroadcastPosts(currentTime);
 
-  for (const cmp of campaigns) {
-    if (cmp.channel_chat_ids.length === 0) continue;
+  for (const post of duePosts) {
+    if (post.channel_chat_ids.length === 0) continue;
 
-    let shouldSend = false;
-
-    if (cmp.schedule_type === "simple") {
-      shouldSend = cmp.schedule_value === currentTime;
-    } else if (cmp.schedule_type === "detailed") {
-      try {
-        const sched = parseSchedule(cmp.schedule_value, { format: "single" });
-        const schedIndex = dayIndex === 0 ? 6 : dayIndex - 1;
-        const dayConfig = sched[schedIndex];
-        if (dayConfig && dayConfig.enabled && dayConfig.time === currentTime) {
-          shouldSend = true;
-        }
-      } catch {
-        if (cmp.schedule_value.includes(currentTime)) {
-          shouldSend = true;
-        }
-      }
-    }
-
-    if (!shouldSend) continue;
-
-    const post = db.pickRandomBroadcastPost(cmp.id);
-    if (!post) continue;
-
-    for (const chatId of cmp.channel_chat_ids) {
+    for (const chatId of post.channel_chat_ids) {
       try {
         await api.copyMessage(chatId, parseInt(post.chat_id), post.message_id);
-        console.log(`[scheduler] broadcast cmp:${cmp.id} post:${post.id} → ${chatId}`);
+        console.log(`[scheduler] broadcast cmp:${post.campaign_id} post:${post.id} → ${chatId}`);
       } catch (err) {
-        console.error(`[scheduler] failed broadcast cmp:${cmp.id} → ${chatId}:`, err);
+        console.error(`[scheduler] failed broadcast cmp:${post.campaign_id} → ${chatId}:`, err);
       }
     }
 
-    db.logBroadcastSend(cmp.id, post.id);
+    db.incrementBroadcastDaysSent(post.id);
+    db.logBroadcastSend(post.campaign_id, post.id);
   }
 }

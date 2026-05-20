@@ -3,7 +3,6 @@ import type {
   Channel,
   Campaign,
   BroadcastPost,
-  BroadcastSendLog,
   PlanPost,
 } from "../types";
 
@@ -55,6 +54,9 @@ export function initDb() {
       message_id  INTEGER NOT NULL,
       label       TEXT    NOT NULL DEFAULT 'Пост',
       position    INTEGER NOT NULL DEFAULT 0,
+      send_time   TEXT    NOT NULL DEFAULT '12:00',
+      total_days  INTEGER NOT NULL DEFAULT 1,
+      days_sent   INTEGER NOT NULL DEFAULT 0,
       created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE,
       UNIQUE(chat_id, message_id, campaign_id)
@@ -185,41 +187,67 @@ export function getBroadcastPost(id: number): BroadcastPost | null {
   return db.query("SELECT * FROM broadcast_posts WHERE id = ?").get(id) as BroadcastPost | null;
 }
 
-export function addBroadcastPost(campaignId: number, chatId: string, messageId: number, label: string): BroadcastPost {
+export function addBroadcastPost(
+  campaignId: number,
+  chatId: string,
+  messageId: number,
+  label: string,
+  sendTime: string,
+  totalDays: number,
+): BroadcastPost {
   const mx = db.query("SELECT COALESCE(MAX(position),-1) as m FROM broadcast_posts WHERE campaign_id = ?").get(campaignId) as { m: number };
   const r = db.query(
-    "INSERT INTO broadcast_posts (campaign_id, chat_id, message_id, label, position) VALUES (?,?,?,?,?)",
-  ).run(campaignId, chatId, messageId, label, mx.m + 1);
+    "INSERT INTO broadcast_posts (campaign_id, chat_id, message_id, label, position, send_time, total_days) VALUES (?,?,?,?,?,?,?)",
+  ).run(campaignId, chatId, messageId, label, mx.m + 1, sendTime, totalDays);
   return getBroadcastPost(Number(r.lastInsertRowid))!;
+}
+
+export function updateBroadcastPost(
+  id: number,
+  f: Partial<Pick<BroadcastPost, "send_time" | "total_days" | "days_sent" | "label" | "position">>,
+) {
+  const s: string[] = [];
+  const v: (string | number)[] = [];
+  if (f.send_time !== undefined) { s.push("send_time = ?"); v.push(f.send_time); }
+  if (f.total_days !== undefined) { s.push("total_days = ?"); v.push(f.total_days); }
+  if (f.days_sent !== undefined) { s.push("days_sent = ?"); v.push(f.days_sent); }
+  if (f.label !== undefined) { s.push("label = ?"); v.push(f.label); }
+  if (f.position !== undefined) { s.push("position = ?"); v.push(f.position); }
+  if (s.length === 0) return;
+  v.push(id);
+  db.query(`UPDATE broadcast_posts SET ${s.join(", ")} WHERE id = ?`).run(...v);
+}
+
+export function incrementBroadcastDaysSent(id: number) {
+  db.query("UPDATE broadcast_posts SET days_sent = days_sent + 1 WHERE id = ?").run(id);
 }
 
 export function removeBroadcastPost(id: number) {
   db.query("DELETE FROM broadcast_posts WHERE id = ?").run(id);
 }
 
-/* ═══════════ Broadcast Send Log (no-repeat random) ═════════ */
+/* ═══════════ Broadcast Send Log ════════════════════════════ */
 
 export function logBroadcastSend(campaignId: number, postId: number) {
   db.query("INSERT INTO broadcast_send_log (campaign_id, post_id) VALUES (?,?)").run(campaignId, postId);
 }
 
-export function getRecentSendLog(campaignId: number, limit: number): BroadcastSendLog[] {
-  return db.query(
-    "SELECT * FROM broadcast_send_log WHERE campaign_id = ? ORDER BY id DESC LIMIT ?",
-  ).all(campaignId, limit) as BroadcastSendLog[];
-}
+/** All due broadcast posts across all active campaigns for current time */
+export function getDueBroadcastPosts(currentTime: string): (BroadcastPost & { channel_chat_ids: string[] })[] {
+  const rows = db.query(`
+    SELECT bp.*
+    FROM broadcast_posts bp
+    JOIN campaigns cmp ON cmp.id = bp.campaign_id
+    WHERE cmp.is_active = 1
+      AND bp.days_sent < bp.total_days
+      AND bp.send_time = ?
+    ORDER BY bp.campaign_id, bp.position
+  `).all(currentTime) as BroadcastPost[];
 
-export function pickRandomBroadcastPost(campaignId: number): BroadcastPost | null {
-  const posts = getBroadcastPosts(campaignId);
-  if (posts.length === 0) return null;
-  if (posts.length === 1) return posts[0] ?? null;
-
-  const recent = getRecentSendLog(campaignId, posts.length - 1);
-  const recentIds = new Set(recent.map((r) => r.post_id));
-  const eligible = posts.filter((p) => !recentIds.has(p.id));
-
-  if (eligible.length === 0) return posts[Math.floor(Math.random() * posts.length)] ?? null;
-  return eligible[Math.floor(Math.random() * eligible.length)] ?? null;
+  return rows.map((bp) => {
+    const channels = getCampaignChannels(bp.campaign_id);
+    return { ...bp, channel_chat_ids: channels.map((c) => c.chat_id) };
+  });
 }
 
 /* ═══════════════════ Plan Posts ═════════════════════════════ */
