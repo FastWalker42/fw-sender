@@ -1,10 +1,10 @@
 import type { BotContext } from "../types";
 import { isAdmin } from "../utils/admin";
 import { e, E } from "../utils/emoji";
-import { getAwaiting, clearAwaiting } from "./callbacks";
+import { getAwaiting, clearAwaiting, setAwaiting } from "./callbacks";
 import { getPostLabel } from "../utils/post-label";
 import { showChannelList } from "../menus/channel-menu";
-import { showCampaignDetail } from "../menus/campaign-menu";
+import { showCampaignDetail, showBroadcastPosts } from "../menus/campaign-menu";
 import * as db from "../db";
 
 export async function handleMessage(ctx: BotContext) {
@@ -108,18 +108,76 @@ export async function handleMessage(ctx: BotContext) {
       return;
     }
 
-    /* ── Add broadcast post ──────────────────────────────── */
+    /* ── Add broadcast post (step 1: receive post) ─────── */
     case "add_broadcast_post": {
       if (!state.id) return;
       const bpCount = db.getBroadcastPosts(state.id).length;
       const label = getPostLabel(msg, bpCount);
+      setAwaiting(userId, {
+        action: "bp_enter_days",
+        id: state.id,
+        pending: { chatId: String(ctx.chat!.id), messageId: msg.message_id, label },
+      });
+      await ctx.reply(
+        `${e("📨", E.AUTOSPAM)} Пост «${label}» принят.\n\nВведите количество дней для постинга (цифрой):`,
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+
+    /* ── Add broadcast post (step 2: enter days) ─────── */
+    case "bp_enter_days": {
+      if (!state.id || !state.pending) return;
+      if (!msg.text || !/^\d+$/.test(msg.text.trim()) || parseInt(msg.text.trim()) < 1) {
+        await ctx.reply(`${e("⚠️", E.WARNING)} Введите число дней (целое число ≥ 1):`, { parse_mode: "HTML" });
+        return;
+      }
+      const days = parseInt(msg.text.trim());
+      setAwaiting(userId, {
+        action: "bp_enter_time",
+        id: state.id,
+        pending: { ...state.pending, days },
+      });
+      await ctx.reply(
+        `${e("🕓", E.SCHEDULE)} Теперь введите время постинга в формате <code>ЧЧ:ММ</code>:`,
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+
+    /* ── Add broadcast post (step 3: enter time) ─────── */
+    case "bp_enter_time": {
+      if (!state.id || !state.pending || !state.pending.days) return;
+      if (!msg.text) {
+        await ctx.reply(`${e("⚠️", E.WARNING)} Введите время в формате ЧЧ:ММ:`, { parse_mode: "HTML" });
+        return;
+      }
+      const m = msg.text.trim().match(/^(\d{1,2}):(\d{2})$/);
+      if (!m?.[1] || !m[2]) {
+        await ctx.reply(`${e("⚠️", E.WARNING)} Формат: ЧЧ:ММ (например 09:30):`, { parse_mode: "HTML" });
+        return;
+      }
+      const time = `${m[1].padStart(2, "0")}:${m[2]}`;
       try {
-        db.addBroadcastPost(state.id, String(ctx.chat!.id), msg.message_id, label);
-        await ctx.reply(`${e("✅", E.CONFIRM)} Пост «${label}» добавлен в автоспам.`, { parse_mode: "HTML" });
+        db.addBroadcastPost(
+          state.id,
+          state.pending.chatId,
+          state.pending.messageId,
+          state.pending.label,
+          time,
+          state.pending.days,
+        );
+        await ctx.reply(
+          `${e("✅", E.CONFIRM)} Пост «${state.pending.label}» добавлен в автоспам.\n` +
+            `Дней: ${state.pending.days}, время: ${time}`,
+          { parse_mode: "HTML" },
+        );
       } catch {
         await ctx.reply(`${e("⚠️", E.WARNING)} Этот пост уже добавлен.`, { parse_mode: "HTML" });
       }
-      return; // stay in awaiting mode for more posts
+      clearAwaiting(userId);
+      await showBroadcastPosts(ctx, state.id, false);
+      return;
     }
 
     /* ── Add plan post ───────────────────────────────────── */
