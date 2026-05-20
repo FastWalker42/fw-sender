@@ -15,9 +15,9 @@ export async function showMainMenu(ctx: BotContext, edit = false) {
   ].join("\n");
 
   const kb = new InlineKeyboard()
-    .text(`📢 Каналы (${channels.length})`, "channels:list")
+    .text(`Каналы (${channels.length})`, "channels:list").icon(E.CHANNELS)
     .row()
-    .text(`🔗 Кампании (${campaigns.length})`, "campaigns:list")
+    .text(`Кампании (${campaigns.length})`, "campaigns:list").icon(E.CAMPAIGN)
     .row();
 
   if (edit && ctx.callbackQuery) {

@@ -9,10 +9,10 @@ export async function showChannelList(ctx: BotContext, edit = true) {
   const kb = new InlineKeyboard();
   for (const ch of channels) {
     const label = ch.title || ch.username || ch.chat_id;
-    kb.text(`📢 ${label}`, `ch:${ch.id}`).row();
+    kb.text(label, `ch:${ch.id}`).icon(E.CHANNELS).row();
   }
-  kb.text("➕ Добавить канал", "ch:add").row();
-  kb.text("◀️ Назад", "main").row();
+  kb.text("Добавить канал", "ch:add").icon(E.ADD).row();
+  kb.text("Назад", "main").icon(E.BACK).row();
 
   const text = `${e("📢", E.CHANNELS)} <b>Каналы</b>\n\nВсего: ${channels.length}`;
 
@@ -41,9 +41,9 @@ export async function showChannelDetail(ctx: BotContext, channelId: number, edit
     .join("\n");
 
   const kb = new InlineKeyboard()
-    .text("🗑 Удалить канал", `ch:del:${channelId}`)
+    .text("Удалить канал", `ch:del:${channelId}`).icon(E.DELETE)
     .row()
-    .text("◀️ Назад", "channels:list")
+    .text("Назад", "channels:list").icon(E.BACK)
     .row();
 
   if (edit && ctx.callbackQuery) {
@@ -59,8 +59,8 @@ export async function showDeleteChannelConfirm(ctx: BotContext, channelId: numbe
   const label = channel.title || channel.username || channel.chat_id;
 
   const kb = new InlineKeyboard()
-    .text("✅ Да, удалить", `ch:confirmdel:${channelId}`)
-    .text("🚫 Отмена", `ch:${channelId}`)
+    .text("Да, удалить", `ch:confirmdel:${channelId}`).icon(E.CONFIRM)
+    .text("Отмена", `ch:${channelId}`).icon(E.CANCEL)
     .row();
 
   await ctx.editMessageText(
