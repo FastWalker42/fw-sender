@@ -14,6 +14,7 @@ import {
   showPlanPosts,
   showPlanPostDetail,
   showStretchConfig,
+  safeDelete,
 } from "../menus/campaign-menu";
 import * as db from "../db";
 
@@ -186,27 +187,31 @@ export async function handleCallback(ctx: BotContext) {
     );
   }
 
-  if (data.startsWith("bp:preview:")) {
-    const post = db.getBroadcastPost(parseId(data, 2));
-    if (!post) return;
-    try {
-      await ctx.api.copyMessage(ctx.chat!.id, parseInt(post.chat_id), post.message_id);
-    } catch {
-      await ctx.reply(`${e("⚠️", E.WARNING)} Не удалось загрузить пост.`, { parse_mode: "HTML" });
-    }
-    return;
+  if (data.startsWith("bp:back:")) {
+    const cmpId = parseId(data, 2);
+    const previewMsgId = parseId(data, 3);
+    await safeDelete(ctx.api, ctx.chat!.id, previewMsgId);
+    await safeDelete(ctx.api, ctx.chat!.id, ctx.callbackQuery!.message!.message_id);
+    return showBroadcastPosts(ctx, cmpId, false);
   }
 
   if (data.startsWith("bp:del:")) {
-    const post = db.getBroadcastPost(parseId(data, 2));
+    const postId = parseId(data, 2);
+    const previewMsgId = parseId(data, 3);
+    const post = db.getBroadcastPost(postId);
     if (!post) return;
     db.removeBroadcastPost(post.id);
-    return showBroadcastPosts(ctx, post.campaign_id);
+    if (previewMsgId) await safeDelete(ctx.api, ctx.chat!.id, previewMsgId);
+    await safeDelete(ctx.api, ctx.chat!.id, ctx.callbackQuery!.message!.message_id);
+    return showBroadcastPosts(ctx, post.campaign_id, false);
   }
 
   if (data.startsWith("bp:")) {
     const id = parseId(data, 1);
-    if (!isNaN(id)) return showBroadcastPostDetail(ctx, id);
+    if (!isNaN(id)) {
+      await safeDelete(ctx.api, ctx.chat!.id, ctx.callbackQuery!.message!.message_id);
+      return showBroadcastPostDetail(ctx, id);
+    }
   }
 
   // ── Plan Posts ────────────────────────────────────────
@@ -215,15 +220,16 @@ export async function handleCallback(ctx: BotContext) {
   if (data.startsWith("pp:add:")) {
     const cmpId = parseId(data, 2);
     setAwaiting(ctx.from!.id, { action: "add_plan_post", id: cmpId });
-    const kb = new InlineKeyboard().text("Готово", `pp:list:${cmpId}`).icon(E.CONFIRM);
+    const kb = new InlineKeyboard().text("Отмена", `pp:list:${cmpId}`).icon(E.CANCEL);
     return ctx.editMessageText(
-      `${e("📥", E.PLAN)} Отправьте пост(ы) для плана.\nПо окончании нажмите «Готово».`,
+      `${e("📥", E.PLAN)} Отправьте пост для плана:`,
       { reply_markup: kb, parse_mode: "HTML" },
     );
   }
 
   if (data.startsWith("pp:auto:")) {
     const id = parseId(data, 2);
+    const previewMsgId = parseId(data, 3);
     const post = db.getPlanPost(id);
     if (!post) return;
     if (post.is_auto_time) {
@@ -232,25 +238,29 @@ export async function handleCallback(ctx: BotContext) {
       const cmp = db.getCampaign(post.campaign_id);
       db.updatePlanPost(id, { is_auto_time: 1, send_time: cmp?.default_time || "12:00" });
     }
+    // Clean up old preview + menu, show fresh detail
+    if (previewMsgId) await safeDelete(ctx.api, ctx.chat!.id, previewMsgId);
+    await safeDelete(ctx.api, ctx.chat!.id, ctx.callbackQuery!.message!.message_id);
     return showPlanPostDetail(ctx, id);
   }
 
-  if (data.startsWith("pp:preview:")) {
-    const post = db.getPlanPost(parseId(data, 2));
-    if (!post) return;
-    try {
-      await ctx.api.copyMessage(ctx.chat!.id, parseInt(post.chat_id), post.message_id);
-    } catch {
-      await ctx.reply(`${e("⚠️", E.WARNING)} Не удалось загрузить пост.`, { parse_mode: "HTML" });
-    }
-    return;
+  if (data.startsWith("pp:back:")) {
+    const cmpId = parseId(data, 2);
+    const previewMsgId = parseId(data, 3);
+    await safeDelete(ctx.api, ctx.chat!.id, previewMsgId);
+    await safeDelete(ctx.api, ctx.chat!.id, ctx.callbackQuery!.message!.message_id);
+    return showPlanPosts(ctx, cmpId, false);
   }
 
   if (data.startsWith("pp:del:")) {
-    const post = db.getPlanPost(parseId(data, 2));
+    const postId = parseId(data, 2);
+    const previewMsgId = parseId(data, 3);
+    const post = db.getPlanPost(postId);
     if (!post) return;
     db.removePlanPost(post.id);
-    return showPlanPosts(ctx, post.campaign_id);
+    if (previewMsgId) await safeDelete(ctx.api, ctx.chat!.id, previewMsgId);
+    await safeDelete(ctx.api, ctx.chat!.id, ctx.callbackQuery!.message!.message_id);
+    return showPlanPosts(ctx, post.campaign_id, false);
   }
 
   if (data.startsWith("pp:stretch:")) return showStretchConfig(ctx, parseId(data, 2));
@@ -263,6 +273,9 @@ export async function handleCallback(ctx: BotContext) {
 
   if (data.startsWith("pp:datetime:")) {
     const id = parseId(data, 2);
+    const previewMsgId = parseId(data, 3);
+    // Clean up preview before entering conversation
+    if (previewMsgId) await safeDelete(ctx.api, ctx.chat!.id, previewMsgId);
     ctx.session.convPayload = String(id);
     await ctx.conversation.enter("planDatetimeConversation");
     return;
@@ -270,7 +283,10 @@ export async function handleCallback(ctx: BotContext) {
 
   if (data.startsWith("pp:")) {
     const id = parseId(data, 1);
-    if (!isNaN(id)) return showPlanPostDetail(ctx, id);
+    if (!isNaN(id)) {
+      await safeDelete(ctx.api, ctx.chat!.id, ctx.callbackQuery!.message!.message_id);
+      return showPlanPostDetail(ctx, id);
+    }
   }
 }
 

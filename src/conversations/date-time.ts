@@ -5,7 +5,7 @@ import type { BotContext } from "../types";
 import { BOT_USERNAME } from "../config";
 import { e, E } from "../utils/emoji";
 import * as db from "../db";
-import { showCampaignDetail, showPlanPostDetail } from "../menus/campaign-menu";
+import { showCampaignDetail, showPlanPostDetail, safeDelete } from "../menus/campaign-menu";
 
 type Conv = Conversation<BotContext, BotContext>;
 
@@ -210,6 +210,7 @@ export async function planDatetimeConversation(conversation: Conv, ctx: BotConte
 
     if (update.callbackQuery?.data === "conv:cancel") {
       await update.answerCallbackQuery();
+      await safeDelete(bc(update).api, bc(update).chat!.id, update.callbackQuery.message!.message_id);
       await showPlanPostDetail(bc(update), postId);
       return;
     }
@@ -218,6 +219,7 @@ export async function planDatetimeConversation(conversation: Conv, ctx: BotConte
       await update.answerCallbackQuery();
       const cmp = db.getCampaign(post.campaign_id);
       db.updatePlanPost(postId, { is_auto_time: 1, send_time: cmp?.default_time || "12:00" });
+      await safeDelete(bc(update).api, bc(update).chat!.id, update.callbackQuery.message!.message_id);
       await showPlanPostDetail(bc(update), postId);
       return;
     }
@@ -231,11 +233,7 @@ export async function planDatetimeConversation(conversation: Conv, ctx: BotConte
           if (parsed.date) updates.send_date = parsed.date;
           if (parsed.time) updates.send_time = parsed.time;
           db.updatePlanPost(postId, updates);
-          await update.reply(
-            `${e("✅", E.CONFIRM)} Время отправки: ${parsed.date || "?"} ${parsed.time || "?"}`,
-            { parse_mode: "HTML" },
-          );
-          await showPlanPostDetail(bc(update), postId, false);
+          await showPlanPostDetail(bc(update), postId);
           return;
         }
       } catch { /* ignore */ }
@@ -250,11 +248,7 @@ export async function planDatetimeConversation(conversation: Conv, ctx: BotConte
           if (parsed.date) updates.send_date = parsed.date;
           if (parsed.time) updates.send_time = parsed.time;
           db.updatePlanPost(postId, updates);
-          await update.reply(
-            `${e("✅", E.CONFIRM)} Время отправки: ${parsed.date || "?"} ${parsed.time || "?"}`,
-            { parse_mode: "HTML" },
-          );
-          await showPlanPostDetail(bc(update), postId, false);
+          await showPlanPostDetail(bc(update), postId);
           return;
         }
       } catch { /* ignore */ }
@@ -269,16 +263,14 @@ export async function planDatetimeConversation(conversation: Conv, ctx: BotConte
         const date = dtMatch[1];
         const time = `${dtMatch[2].padStart(2, "0")}:${dtMatch[3]}`;
         db.updatePlanPost(postId, { send_date: date, send_time: time, is_auto_time: 0 });
-        await update.reply(`${e("✅", E.CONFIRM)} Время отправки: ${date} ${time}`, { parse_mode: "HTML" });
-        await showPlanPostDetail(bc(update), postId, false);
+        await showPlanPostDetail(bc(update), postId);
         return;
       }
       // Try date only
       const dateMatch = text.match(/^(\d{4}-\d{2}-\d{2})$/);
       if (dateMatch?.[1]) {
         db.updatePlanPost(postId, { send_date: dateMatch[1], is_auto_time: 0 });
-        await update.reply(`${e("✅", E.CONFIRM)} Дата: ${dateMatch[1]}`, { parse_mode: "HTML" });
-        await showPlanPostDetail(bc(update), postId, false);
+        await showPlanPostDetail(bc(update), postId);
         return;
       }
       // Try time only
@@ -286,8 +278,7 @@ export async function planDatetimeConversation(conversation: Conv, ctx: BotConte
       if (timeMatch?.[1] && timeMatch[2]) {
         const time = `${timeMatch[1].padStart(2, "0")}:${timeMatch[2]}`;
         db.updatePlanPost(postId, { send_time: time, is_auto_time: 0 });
-        await update.reply(`${e("✅", E.CONFIRM)} Время: ${time}`, { parse_mode: "HTML" });
-        await showPlanPostDetail(bc(update), postId, false);
+        await showPlanPostDetail(bc(update), postId);
         return;
       }
       await update.reply(

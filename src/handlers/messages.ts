@@ -7,7 +7,7 @@ import { e, E } from "../utils/emoji";
 import { getAwaiting, clearAwaiting, setAwaiting } from "./callbacks";
 import { getPostLabel } from "../utils/post-label";
 import { showChannelList } from "../menus/channel-menu";
-import { showCampaignDetail, showBroadcastPosts } from "../menus/campaign-menu";
+import { showCampaignDetail, showBroadcastPostDetail, showPlanPostDetail } from "../menus/campaign-menu";
 import * as db from "../db";
 
 export async function handleMessage(ctx: BotContext) {
@@ -192,8 +192,9 @@ export async function handleMessage(ctx: BotContext) {
         return;
       }
 
+      let newPost;
       try {
-        db.addBroadcastPost(
+        newPost = db.addBroadcastPost(
           state.id,
           state.pending.chatId,
           state.pending.messageId,
@@ -201,31 +202,87 @@ export async function handleMessage(ctx: BotContext) {
           time,
           state.pending.days,
         );
-        await ctx.reply(
-          `${e("✅", E.CONFIRM)} Пост «${state.pending.label}» добавлен в автоспам.\n` +
-            `Дней: ${state.pending.days}, время: ${time}`,
-          { parse_mode: "HTML" },
-        );
       } catch {
         await ctx.reply(`${e("⚠️", E.WARNING)} Этот пост уже добавлен.`, { parse_mode: "HTML" });
+        clearAwaiting(userId);
+        return;
       }
       clearAwaiting(userId);
-      await showBroadcastPosts(ctx, state.id, false);
+      await showBroadcastPostDetail(ctx, newPost.id);
       return;
     }
 
-    /* ── Add plan post ───────────────────────────────────── */
+    /* ── Add plan post (step 1: receive post) ──────────── */
     case "add_plan_post": {
       if (!state.id) return;
       const ppCount = db.getUnsentPlanPosts(state.id).length;
-      const label = getPostLabel(msg, ppCount);
+      const ppLabel = getPostLabel(msg, ppCount);
+      setAwaiting(userId, {
+        action: "pp_enter_time",
+        id: state.id,
+        pending: { chatId: String(ctx.chat!.id), messageId: msg.message_id, label: ppLabel },
+      });
+
+      const ppKb = new InlineKeyboard();
+      if (BOT_USERNAME) {
+        const tw = tgwidget(BOT_USERNAME).date({ mode: "time" }).style({ liquidGlass: true, adoptTgPalette: true });
+        ppKb.webApp("Выбрать время", tw.url()).icon(E.SCHEDULE).row();
+      }
+      ppKb.text("Отмена", `pp:list:${state.id}`).icon(E.CANCEL).row();
+
+      await ctx.reply(
+        `${e("📥", E.PLAN)} Пост «${ppLabel}» принят.\n\n` +
+          `${e("🕓", E.SCHEDULE)} <b>Время постинга</b>\n` +
+          `Выберите через виджет или введите в формате <code>ЧЧ:ММ</code>:`,
+        { reply_markup: ppKb, parse_mode: "HTML" },
+      );
+      return;
+    }
+
+    /* ── Add plan post (step 2: enter time) ──────────── */
+    case "pp_enter_time": {
+      if (!state.id || !state.pending) return;
+
+      let ppTime: string | null = null;
+
+      if (msg.web_app_data?.data) {
+        try {
+          const parsed = parseDate(msg.web_app_data.data, { mode: "time" });
+          if (parsed?.time) ppTime = parsed.time;
+        } catch { /* ignore */ }
+      }
+
+      if (!ppTime && msg.text?.startsWith("/start ")) {
+        try {
+          const parsed = parseDate(msg.text.slice(7), { mode: "time" });
+          if (parsed?.time) ppTime = parsed.time;
+        } catch { /* ignore */ }
+      }
+
+      if (!ppTime && msg.text) {
+        const tm = msg.text.trim().match(/^(\d{1,2}):(\d{2})$/);
+        if (tm?.[1] && tm[2]) {
+          ppTime = `${tm[1].padStart(2, "0")}:${tm[2]}`;
+        }
+      }
+
+      if (!ppTime) {
+        await ctx.reply(`${e("⚠️", E.WARNING)} Формат: ЧЧ:ММ (например 09:30) или выберите через виджет.`, { parse_mode: "HTML" });
+        return;
+      }
+
+      let newPlanPost;
       try {
-        db.addPlanPost(state.id, String(ctx.chat!.id), msg.message_id, label);
-        await ctx.reply(`${e("✅", E.CONFIRM)} Пост «${label}» добавлен в план.`, { parse_mode: "HTML" });
+        newPlanPost = db.addPlanPost(state.id, state.pending.chatId, state.pending.messageId, state.pending.label);
+        db.updatePlanPost(newPlanPost.id, { send_time: ppTime });
       } catch {
         await ctx.reply(`${e("⚠️", E.WARNING)} Этот пост уже добавлен.`, { parse_mode: "HTML" });
+        clearAwaiting(userId);
+        return;
       }
-      return; // stay in awaiting mode
+      clearAwaiting(userId);
+      await showPlanPostDetail(ctx, newPlanPost.id);
+      return;
     }
 
 
