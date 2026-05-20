@@ -1,13 +1,11 @@
 import type { BotContext } from "../types";
 import { isAdmin } from "../utils/admin";
+import { e, E } from "../utils/emoji";
 import { getAwaiting, clearAwaiting } from "./callbacks";
 import { getPostLabel } from "../utils/post-label";
 import { showChannelList } from "../menus/channel-menu";
-import { showCampaignDetail, showBroadcastPosts, showPlanPosts } from "../menus/campaign-menu";
+import { showCampaignDetail } from "../menus/campaign-menu";
 import * as db from "../db";
-
-const TIME_RE = /^(\d{1,2}):(\d{2})$/;
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export async function handleMessage(ctx: BotContext) {
   if (!isAdmin(ctx)) return;
@@ -42,16 +40,16 @@ export async function handleMessage(ctx: BotContext) {
           username = text.slice(1);
           chatId = text; // will verify below
         } else {
-          await ctx.reply("⚠️ Отправьте ID канала (-100...), @username или пересланное сообщение.");
+          await ctx.reply(`${e("⚠️", E.WARNING)} Отправьте ID канала (-100...), @username или пересланное сообщение.`, { parse_mode: "HTML" });
           return;
         }
       } else {
-        await ctx.reply("⚠️ Отправьте текст с ID/@username или перешлите сообщение из канала.");
+        await ctx.reply(`${e("⚠️", E.WARNING)} Отправьте текст с ID/@username или перешлите сообщение из канала.`, { parse_mode: "HTML" });
         return;
       }
 
       if (!chatId) {
-        await ctx.reply("⚠️ Не удалось определить канал.");
+        await ctx.reply(`${e("⚠️", E.WARNING)} Не удалось определить канал.`, { parse_mode: "HTML" });
         return;
       }
 
@@ -59,27 +57,27 @@ export async function handleMessage(ctx: BotContext) {
       try {
         const chat = await ctx.api.getChat(chatId);
         if (chat.type !== "channel") {
-          await ctx.reply("⚠️ Это не канал.");
+          await ctx.reply(`${e("⚠️", E.WARNING)} Это не канал.`, { parse_mode: "HTML" });
           return;
         }
         chatId = String(chat.id);
         title = ("title" in chat ? chat.title : "") || title;
         username = ("username" in chat ? chat.username : null) ?? username;
       } catch {
-        await ctx.reply("⚠️ Бот не имеет доступа к этому каналу. Добавьте бота как администратора.");
+        await ctx.reply(`${e("⚠️", E.WARNING)} Бот не имеет доступа к этому каналу. Добавьте бота как администратора.`, { parse_mode: "HTML" });
         return;
       }
 
       // Check duplicate
       if (db.getChannelByChatId(chatId)) {
-        await ctx.reply("ℹ️ Этот канал уже добавлен.");
+        await ctx.reply(`${e("ℹ️", E.INFO)} Этот канал уже добавлен.`, { parse_mode: "HTML" });
         clearAwaiting(userId);
         return;
       }
 
       db.addChannel(chatId, title, username);
       clearAwaiting(userId);
-      await ctx.reply(`✅ Канал <b>${title || chatId}</b> добавлен.`, { parse_mode: "HTML" });
+      await ctx.reply(`${e("✅", E.CONFIRM)} Канал <b>${title || chatId}</b> добавлен.`, { parse_mode: "HTML" });
       await showChannelList(ctx, false);
       return;
     }
@@ -87,12 +85,12 @@ export async function handleMessage(ctx: BotContext) {
     /* ── Name new campaign ───────────────────────────────── */
     case "name_campaign": {
       if (!msg.text) {
-        await ctx.reply("⚠️ Отправьте текстовое название.");
+        await ctx.reply(`${e("⚠️", E.WARNING)} Отправьте текстовое название.`, { parse_mode: "HTML" });
         return;
       }
       const cmp = db.addCampaign(msg.text.trim());
       clearAwaiting(userId);
-      await ctx.reply(`✅ Кампания <b>${cmp.name}</b> создана.`, { parse_mode: "HTML" });
+      await ctx.reply(`${e("✅", E.CONFIRM)} Кампания <b>${cmp.name}</b> создана.`, { parse_mode: "HTML" });
       await showCampaignDetail(ctx, cmp.id, false);
       return;
     }
@@ -100,54 +98,12 @@ export async function handleMessage(ctx: BotContext) {
     /* ── Rename campaign ─────────────────────────────────── */
     case "rename_campaign": {
       if (!msg.text || !state.id) {
-        await ctx.reply("⚠️ Отправьте новое название.");
+        await ctx.reply(`${e("⚠️", E.WARNING)} Отправьте новое название.`, { parse_mode: "HTML" });
         return;
       }
       db.updateCampaign(state.id, { name: msg.text.trim() });
       clearAwaiting(userId);
-      await ctx.reply("✅ Название обновлено.");
-      await showCampaignDetail(ctx, state.id, false);
-      return;
-    }
-
-    /* ── Set campaign simple time ────────────────────────── */
-    case "set_campaign_time": {
-      if (!msg.text || !state.id) return;
-      const m = msg.text.trim().match(TIME_RE);
-      if (!m || !m[1] || !m[2]) {
-        await ctx.reply("⚠️ Формат: ЧЧ:ММ (например 09:30)");
-        return;
-      }
-      const time = `${m[1].padStart(2, "0")}:${m[2]}`;
-      db.updateCampaign(state.id, { schedule_type: "simple", schedule_value: time });
-      clearAwaiting(userId);
-      await ctx.reply(`⏰ Расписание: ежедневно в ${time}`);
-      await showCampaignDetail(ctx, state.id, false);
-      return;
-    }
-
-    /* ── Set campaign detailed schedule (text fallback) ─── */
-    case "set_campaign_schedule": {
-      if (!msg.text || !state.id) return;
-      db.updateCampaign(state.id, { schedule_type: "detailed", schedule_value: msg.text.trim() });
-      clearAwaiting(userId);
-      await ctx.reply("📋 Расписание обновлено.");
-      await showCampaignDetail(ctx, state.id, false);
-      return;
-    }
-
-    /* ── Set default time ────────────────────────────────── */
-    case "set_default_time": {
-      if (!msg.text || !state.id) return;
-      const m = msg.text.trim().match(TIME_RE);
-      if (!m || !m[1] || !m[2]) {
-        await ctx.reply("⚠️ Формат: ЧЧ:ММ");
-        return;
-      }
-      const time = `${m[1].padStart(2, "0")}:${m[2]}`;
-      db.updateCampaign(state.id, { default_time: time });
-      clearAwaiting(userId);
-      await ctx.reply(`🕐 Дефолт-время: ${time}`);
+      await ctx.reply(`${e("✅", E.CONFIRM)} Название обновлено.`, { parse_mode: "HTML" });
       await showCampaignDetail(ctx, state.id, false);
       return;
     }
@@ -159,9 +115,9 @@ export async function handleMessage(ctx: BotContext) {
       const label = getPostLabel(msg, bpCount);
       try {
         db.addBroadcastPost(state.id, String(ctx.chat!.id), msg.message_id, label);
-        await ctx.reply(`✅ Пост «${label}» добавлен в авторассылку.`);
+        await ctx.reply(`${e("✅", E.CONFIRM)} Пост «${label}» добавлен в автоспам.`, { parse_mode: "HTML" });
       } catch {
-        await ctx.reply("⚠️ Этот пост уже добавлен.");
+        await ctx.reply(`${e("⚠️", E.WARNING)} Этот пост уже добавлен.`, { parse_mode: "HTML" });
       }
       return; // stay in awaiting mode for more posts
     }
@@ -173,41 +129,13 @@ export async function handleMessage(ctx: BotContext) {
       const label = getPostLabel(msg, ppCount);
       try {
         db.addPlanPost(state.id, String(ctx.chat!.id), msg.message_id, label);
-        await ctx.reply(`✅ Пост «${label}» добавлен в план.`);
+        await ctx.reply(`${e("✅", E.CONFIRM)} Пост «${label}» добавлен в план.`, { parse_mode: "HTML" });
       } catch {
-        await ctx.reply("⚠️ Этот пост уже добавлен.");
+        await ctx.reply(`${e("⚠️", E.WARNING)} Этот пост уже добавлен.`, { parse_mode: "HTML" });
       }
       return; // stay in awaiting mode
     }
 
-    /* ── Set plan post date ──────────────────────────────── */
-    case "set_plan_date": {
-      if (!msg.text || !state.id) return;
-      if (!DATE_RE.test(msg.text.trim())) {
-        await ctx.reply("⚠️ Формат: ГГГГ-ММ-ДД (например 2025-03-15)");
-        return;
-      }
-      db.updatePlanPost(state.id, { send_date: msg.text.trim() });
-      clearAwaiting(userId);
-      await ctx.reply(`📅 Дата: ${msg.text.trim()}`);
-      await showPlanPosts(ctx, db.getPlanPost(state.id)!.campaign_id, false);
-      return;
-    }
 
-    /* ── Set plan post time ──────────────────────────────── */
-    case "set_plan_time": {
-      if (!msg.text || !state.id) return;
-      const m = msg.text.trim().match(TIME_RE);
-      if (!m || !m[1] || !m[2]) {
-        await ctx.reply("⚠️ Формат: ЧЧ:ММ");
-        return;
-      }
-      const time = `${m[1].padStart(2, "0")}:${m[2]}`;
-      db.updatePlanPost(state.id, { send_time: time, is_auto_time: 0 });
-      clearAwaiting(userId);
-      await ctx.reply(`⏰ Время: ${time}`);
-      await showPlanPosts(ctx, db.getPlanPost(state.id)!.campaign_id, false);
-      return;
-    }
   }
 }

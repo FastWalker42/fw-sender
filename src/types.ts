@@ -63,6 +63,7 @@ export interface PlanPost {
 
 export interface SessionData {
   step?: string;
+  convPayload?: string;
 }
 
 export type BotContext = Context & SessionFlavor<SessionData> & ConversationFlavor<Context>;

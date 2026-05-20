@@ -1,5 +1,5 @@
 import { Bot, session } from "grammy";
-import { conversations } from "@grammyjs/conversations";
+import { conversations, createConversation } from "@grammyjs/conversations";
 import type { BotContext, SessionData } from "./types";
 import { BOT_TOKEN } from "./config";
 import { initDb } from "./db";
@@ -8,6 +8,11 @@ import { handleCallback } from "./handlers/callbacks";
 import { handleMessage } from "./handlers/messages";
 import { adminOnly } from "./utils/admin";
 import { startScheduler, stopScheduler } from "./scheduler";
+import {
+  scheduleConversation,
+  defaultTimeConversation,
+  planDatetimeConversation,
+} from "./conversations/date-time";
 
 // Init database
 initDb();
@@ -25,6 +30,9 @@ bot.use(
 
 // Conversations plugin
 bot.use(conversations());
+bot.use(createConversation(scheduleConversation));
+bot.use(createConversation(defaultTimeConversation));
+bot.use(createConversation(planDatetimeConversation));
 
 // Admin guard for all handlers
 bot.use(adminOnly);

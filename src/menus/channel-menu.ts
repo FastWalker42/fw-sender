@@ -1,5 +1,6 @@
 import { InlineKeyboard } from "grammy";
 import type { BotContext } from "../types";
+import { e, E } from "../utils/emoji";
 import * as db from "../db";
 
 export async function showChannelList(ctx: BotContext, edit = true) {
@@ -13,7 +14,7 @@ export async function showChannelList(ctx: BotContext, edit = true) {
   kb.text("➕ Добавить канал", "ch:add").row();
   kb.text("◀️ Назад", "main").row();
 
-  const text = `📢 <b>Каналы</b>\n\nВсего: ${channels.length}`;
+  const text = `${e("📢", E.CHANNELS)} <b>Каналы</b>\n\nВсего: ${channels.length}`;
 
   if (edit && ctx.callbackQuery) {
     await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "HTML" });
@@ -32,7 +33,7 @@ export async function showChannelDetail(ctx: BotContext, channelId: number, edit
   const label = channel.title || channel.username || channel.chat_id;
 
   const text = [
-    `📢 <b>${label}</b>`,
+    `${e("📢", E.CHANNELS)} <b>${label}</b>`,
     `ID: <code>${channel.chat_id}</code>`,
     channel.username ? `Username: @${channel.username}` : "",
   ]
@@ -59,7 +60,7 @@ export async function showDeleteChannelConfirm(ctx: BotContext, channelId: numbe
 
   const kb = new InlineKeyboard()
     .text("✅ Да, удалить", `ch:confirmdel:${channelId}`)
-    .text("❌ Отмена", `ch:${channelId}`)
+    .text("🚫 Отмена", `ch:${channelId}`)
     .row();
 
   await ctx.editMessageText(

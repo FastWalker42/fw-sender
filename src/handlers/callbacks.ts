@@ -1,6 +1,7 @@
 import { InlineKeyboard } from "grammy";
 import type { BotContext } from "../types";
 import { isAdmin } from "../utils/admin";
+import { e, E } from "../utils/emoji";
 import { showMainMenu } from "../menus/main-menu";
 import { showChannelList, showChannelDetail, showDeleteChannelConfirm } from "../menus/channel-menu";
 import {
@@ -8,7 +9,6 @@ import {
   showCampaignDetail,
   showCampaignChannels,
   showLinkChannelPicker,
-  showScheduleChoice,
   showBroadcastPosts,
   showBroadcastPostDetail,
   showPlanPosts,
@@ -58,9 +58,9 @@ export async function handleCallback(ctx: BotContext) {
 
   if (data === "ch:add") {
     setAwaiting(ctx.from!.id, { action: "add_channel" });
-    const kb = new InlineKeyboard().text("❌ Отмена", "channels:list");
+    const kb = new InlineKeyboard().text("🚫 Отмена", "channels:list");
     return ctx.editMessageText(
-      "📢 <b>Добавление канала</b>\n\n" +
+      `${e("📢", E.CHANNELS)} <b>Добавление канала</b>\n\n` +
         "Отправьте:\n" +
         "• Пересланное сообщение из канала\n" +
         "• ID канала (<code>-100...</code>)\n" +
@@ -88,8 +88,8 @@ export async function handleCallback(ctx: BotContext) {
 
   if (data === "cmp:add") {
     setAwaiting(ctx.from!.id, { action: "name_campaign" });
-    const kb = new InlineKeyboard().text("❌ Отмена", "campaigns:list");
-    return ctx.editMessageText("📡 Введите название кампании:", {
+    const kb = new InlineKeyboard().text("🚫 Отмена", "campaigns:list");
+    return ctx.editMessageText(`${e("🔗", E.CAMPAIGN)} Введите название кампании:`, {
       reply_markup: kb,
       parse_mode: "HTML",
     });
@@ -105,8 +105,8 @@ export async function handleCallback(ctx: BotContext) {
   if (data.startsWith("cmp:rename:")) {
     const id = parseId(data, 2);
     setAwaiting(ctx.from!.id, { action: "rename_campaign", id });
-    const kb = new InlineKeyboard().text("❌ Отмена", `cmp:${id}`);
-    return ctx.editMessageText("✏️ Введите новое название:", {
+    const kb = new InlineKeyboard().text("🚫 Отмена", `cmp:${id}`);
+    return ctx.editMessageText(`${e("🔨", E.RENAME)} Введите новое название:`, {
       reply_markup: kb,
       parse_mode: "HTML",
     });
@@ -118,7 +118,7 @@ export async function handleCallback(ctx: BotContext) {
     if (!cmp) return;
     const kb = new InlineKeyboard()
       .text("✅ Да", `cmp:confirmdel:${id}`)
-      .text("❌ Нет", `cmp:${id}`);
+      .text("🚫 Нет", `cmp:${id}`);
     return ctx.editMessageText(`Удалить кампанию <b>${cmp.name}</b> со всеми данными?`, {
       reply_markup: kb,
       parse_mode: "HTML",
@@ -130,49 +130,18 @@ export async function handleCallback(ctx: BotContext) {
     return showCampaignList(ctx);
   }
 
-  if (data.startsWith("cmp:sched:")) return showScheduleChoice(ctx, parseId(data, 2));
-
-  if (data.startsWith("cmp:simpletime:")) {
+  if (data.startsWith("cmp:sched:")) {
     const id = parseId(data, 2);
-    setAwaiting(ctx.from!.id, { action: "set_campaign_time", id });
-    const kb = new InlineKeyboard().text("◀️ Назад", `cmp:${id}`);
-    return ctx.editMessageText("⏰ Введите время в формате <code>ЧЧ:ММ</code>:", {
-      reply_markup: kb,
-      parse_mode: "HTML",
-    });
-  }
-
-  if (data.startsWith("cmp:dettime:")) {
-    const id = parseId(data, 2);
-    setAwaiting(ctx.from!.id, { action: "set_campaign_schedule", id });
-    const kb = new InlineKeyboard().text("◀️ Назад", `cmp:${id}`);
-    return ctx.editMessageText(
-      "📋 Введите расписание:\n<code>ПН,СР,ПТ 09:00</code>\nили <code>ежедневно 14:30</code>",
-      { reply_markup: kb, parse_mode: "HTML" },
-    );
+    ctx.session.convPayload = String(id);
+    await ctx.conversation.enter("scheduleConversation");
+    return;
   }
 
   if (data.startsWith("cmp:deftime:")) {
     const id = parseId(data, 2);
-    const bot = (await import("../config")).BOT_USERNAME;
-    if (bot) {
-      const { tgwidget } = await import("tgwidget");
-      const tw = tgwidget(bot).date({ mode: "time" }).style({ liquidGlass: true, adoptTgPalette: true });
-      const kb = new InlineKeyboard()
-        .url("🕐 Выбрать время", tw.url().replace("start=", `start=tw_cdt_${id}_`))
-        .row()
-        .text("◀️ Назад", `cmp:${id}`);
-      return ctx.editMessageText("🕐 <b>Дефолт-время для плана постов</b>\n\nВыберите время:", {
-        reply_markup: kb,
-        parse_mode: "HTML",
-      });
-    }
-    setAwaiting(ctx.from!.id, { action: "set_default_time", id });
-    const kb = new InlineKeyboard().text("◀️ Назад", `cmp:${id}`);
-    return ctx.editMessageText("🕐 Введите дефолт-время в формате <code>ЧЧ:ММ</code>:", {
-      reply_markup: kb,
-      parse_mode: "HTML",
-    });
+    ctx.session.convPayload = String(id);
+    await ctx.conversation.enter("defaultTimeConversation");
+    return;
   }
 
   if (data.startsWith("cmp:")) {
@@ -204,9 +173,9 @@ export async function handleCallback(ctx: BotContext) {
   if (data.startsWith("bp:add:")) {
     const cmpId = parseId(data, 2);
     setAwaiting(ctx.from!.id, { action: "add_broadcast_post", id: cmpId });
-    const kb = new InlineKeyboard().text("❌ Готово", `bp:list:${cmpId}`);
+    const kb = new InlineKeyboard().text("✅ Готово", `bp:list:${cmpId}`);
     return ctx.editMessageText(
-      "📤 Отправьте пост(ы) для авторассылки.\nПо окончании нажмите «Готово».",
+      `${e("📨", E.AUTOSPAM)} Отправьте пост(ы) для автоспама.\nПо окончании нажмите «Готово».`,
       { reply_markup: kb, parse_mode: "HTML" },
     );
   }
@@ -217,7 +186,7 @@ export async function handleCallback(ctx: BotContext) {
     try {
       await ctx.api.copyMessage(ctx.chat!.id, parseInt(post.chat_id), post.message_id);
     } catch {
-      await ctx.reply("⚠️ Не удалось загрузить пост.");
+      await ctx.reply(`${e("⚠️", E.WARNING)} Не удалось загрузить пост.`, { parse_mode: "HTML" });
     }
     return;
   }
@@ -240,9 +209,9 @@ export async function handleCallback(ctx: BotContext) {
   if (data.startsWith("pp:add:")) {
     const cmpId = parseId(data, 2);
     setAwaiting(ctx.from!.id, { action: "add_plan_post", id: cmpId });
-    const kb = new InlineKeyboard().text("❌ Готово", `pp:list:${cmpId}`);
+    const kb = new InlineKeyboard().text("✅ Готово", `pp:list:${cmpId}`);
     return ctx.editMessageText(
-      "📤 Отправьте пост(ы) для плана.\nПо окончании нажмите «Готово».",
+      `${e("📥", E.PLAN)} Отправьте пост(ы) для плана.\nПо окончании нажмите «Готово».`,
       { reply_markup: kb, parse_mode: "HTML" },
     );
   }
@@ -266,7 +235,7 @@ export async function handleCallback(ctx: BotContext) {
     try {
       await ctx.api.copyMessage(ctx.chat!.id, parseInt(post.chat_id), post.message_id);
     } catch {
-      await ctx.reply("⚠️ Не удалось загрузить пост.");
+      await ctx.reply(`${e("⚠️", E.WARNING)} Не удалось загрузить пост.`, { parse_mode: "HTML" });
     }
     return;
   }
@@ -286,24 +255,11 @@ export async function handleCallback(ctx: BotContext) {
     return stretchPosts(ctx, cmpId, totalDays);
   }
 
-  if (data.startsWith("pp:setdate:")) {
+  if (data.startsWith("pp:datetime:")) {
     const id = parseId(data, 2);
-    setAwaiting(ctx.from!.id, { action: "set_plan_date", id });
-    const kb = new InlineKeyboard().text("◀️ Назад", `pp:${id}`);
-    return ctx.editMessageText("📅 Введите дату <code>ГГГГ-ММ-ДД</code>:", {
-      reply_markup: kb,
-      parse_mode: "HTML",
-    });
-  }
-
-  if (data.startsWith("pp:settime:")) {
-    const id = parseId(data, 2);
-    setAwaiting(ctx.from!.id, { action: "set_plan_time", id });
-    const kb = new InlineKeyboard().text("◀️ Назад", `pp:${id}`);
-    return ctx.editMessageText("⏰ Введите время <code>ЧЧ:ММ</code>:", {
-      reply_markup: kb,
-      parse_mode: "HTML",
-    });
+    ctx.session.convPayload = String(id);
+    await ctx.conversation.enter("planDatetimeConversation");
+    return;
   }
 
   if (data.startsWith("pp:")) {

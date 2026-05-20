@@ -1,8 +1,10 @@
 import type { Api } from "grammy";
 import { parseSchedule } from "tgwidget";
+import { ADMIN_IDS } from "../config";
+import { e, E } from "../utils/emoji";
 import * as db from "../db";
 
-const POLL_INTERVAL_MS = 60_000; // check every minute
+const POLL_INTERVAL_MS = 60_000;
 let timer: ReturnType<typeof setInterval> | null = null;
 
 export function startScheduler(api: Api) {
@@ -19,7 +21,6 @@ export function startScheduler(api: Api) {
     }
   }, POLL_INTERVAL_MS);
 
-  // also run immediately
   setTimeout(() => {
     processPlanPosts(api).catch(console.error);
     processBroadcasts(api).catch(console.error);
@@ -47,17 +48,36 @@ async function processPlanPosts(api: Api) {
       }
     }
     db.markPlanPostSent(post.id);
+
+    // Notify admins when plan posts remaining hits 3, 2, or 1
+    const remaining = db.getUnsentPlanPosts(post.campaign_id).length;
+    if (remaining <= 3 && remaining >= 1) {
+      const cmp = db.getCampaign(post.campaign_id);
+      const cmpName = cmp?.name || `#${post.campaign_id}`;
+      const msg =
+        `${e("🔔", E.BELL)} <b>Внимание!</b>\n\n` +
+        `В плане кампании «${cmpName}» осталось <b>${remaining}</b> ` +
+        `${remaining === 1 ? "сообщение" : remaining <= 4 ? "сообщения" : "сообщений"}.`;
+
+      for (const adminId of ADMIN_IDS) {
+        try {
+          await api.sendMessage(adminId, msg, { parse_mode: "HTML" });
+        } catch {
+          // admin may not have started the bot yet
+        }
+      }
+    }
   }
 }
 
-/* ═══════════════ Auto-Broadcasts ══════════════════════════ */
+/* ═══════════════ Autospam (broadcasts) ════════════════════ */
 
 async function processBroadcasts(api: Api) {
   const now = new Date();
   const hh = String(now.getHours()).padStart(2, "0");
   const mm = String(now.getMinutes()).padStart(2, "0");
   const currentTime = `${hh}:${mm}`;
-  const dayIndex = now.getDay(); // 0=Sun..6=Sat → need Mon=0
+  const dayIndex = now.getDay();
 
   const campaigns = db.getActiveCampaigns();
 
@@ -70,16 +90,13 @@ async function processBroadcasts(api: Api) {
       shouldSend = cmp.schedule_value === currentTime;
     } else if (cmp.schedule_type === "detailed") {
       try {
-        // tgwidget single-28 format: 4 chars per day (Mon..Sun), "9999" = disabled
         const sched = parseSchedule(cmp.schedule_value, { format: "single" });
-        // Map JS day (0=Sun) → schedule index (0=Mon)
         const schedIndex = dayIndex === 0 ? 6 : dayIndex - 1;
         const dayConfig = sched[schedIndex];
         if (dayConfig && dayConfig.enabled && dayConfig.time === currentTime) {
           shouldSend = true;
         }
       } catch {
-        // Fallback: treat schedule_value as text like "ежедневно 14:30"
         if (cmp.schedule_value.includes(currentTime)) {
           shouldSend = true;
         }

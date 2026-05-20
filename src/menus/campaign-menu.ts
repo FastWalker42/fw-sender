@@ -1,7 +1,6 @@
 import { InlineKeyboard } from "grammy";
-import { tgwidget } from "tgwidget";
 import type { BotContext } from "../types";
-import { BOT_USERNAME } from "../config";
+import { e, E } from "../utils/emoji";
 import * as db from "../db";
 
 /* ═══════════════════ Campaign List ═════════════════════════ */
@@ -11,13 +10,13 @@ export async function showCampaignList(ctx: BotContext, edit = true) {
 
   const kb = new InlineKeyboard();
   for (const c of campaigns) {
-    const st = c.is_active ? "🟢" : "🔴";
+    const st = c.is_active ? "✅" : "🚫";
     kb.text(`${st} ${c.name}`, `cmp:${c.id}`).row();
   }
   kb.text("➕ Создать кампанию", "cmp:add").row();
   kb.text("◀️ Назад", "main").row();
 
-  const text = `📡 <b>Кампании</b>\n\nВсего: ${campaigns.length}`;
+  const text = `${e("🔗", E.CAMPAIGN)} <b>Кампании</b>\n\nВсего: ${campaigns.length}`;
 
   if (edit && ctx.callbackQuery) {
     await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "HTML" });
@@ -38,7 +37,9 @@ export async function showCampaignDetail(ctx: BotContext, id: number, edit = tru
   const channels = db.getCampaignChannels(id);
   const bPosts = db.getBroadcastPosts(id);
   const pPosts = db.getUnsentPlanPosts(id);
-  const status = cmp.is_active ? "🟢 Активна" : "🔴 Остановлена";
+  const status = cmp.is_active
+    ? `${e("✅", E.ACTIVE)} Активна`
+    : `${e("🚫", E.STOPPED)} Остановлена`;
   const sched =
     cmp.schedule_type === "simple"
       ? `Ежедневно в ${cmp.schedule_value}`
@@ -48,35 +49,35 @@ export async function showCampaignDetail(ctx: BotContext, id: number, edit = tru
     : "—";
 
   const text = [
-    `📡 <b>${cmp.name}</b>`,
+    `${e("🔗", E.CAMPAIGN)} <b>${cmp.name}</b>`,
     "",
     `${status}`,
-    `⏰ Расписание: ${sched}`,
-    `🕐 Дефолт-время плана: ${cmp.default_time}`,
-    `📢 Каналы: ${chNames}`,
-    `📤 Авторассылка: ${bPosts.length} постов`,
-    `📝 План постов: ${pPosts.length} в очереди`,
+    `${e("🕓", E.SCHEDULE)} Расписание: ${sched}`,
+    `${e("🕓", E.SCHEDULE)} Дефолт-время плана: ${cmp.default_time}`,
+    `${e("📢", E.CHANNELS)} Каналы: ${chNames}`,
+    `${e("📨", E.AUTOSPAM)} Автоспам: ${bPosts.length} постов`,
+    `${e("📥", E.PLAN)} План постов: ${pPosts.length} в очереди`,
   ].join("\n");
 
   const kb = new InlineKeyboard()
-    .text(`📤 Авторассылка (${bPosts.length})`, `bp:list:${id}`)
+    .text(`📨 Автоспам (${bPosts.length})`, `bp:list:${id}`)
     .row()
-    .text(`📝 План постов (${pPosts.length})`, `pp:list:${id}`)
+    .text(`📥 План постов (${pPosts.length})`, `pp:list:${id}`)
     .row()
     .text(`📢 Каналы (${channels.length})`, `cmpch:list:${id}`)
     .row()
-    .text("⏰ Расписание", `cmp:sched:${id}`)
+    .text("🕓 Расписание", `cmp:sched:${id}`)
     .row()
-    .text("🕐 Дефолт-время", `cmp:deftime:${id}`)
+    .text("🕓 Дефолт-время", `cmp:deftime:${id}`)
     .row();
 
   if (cmp.is_active) {
-    kb.text("⏸ Остановить", `cmp:toggle:${id}`).row();
+    kb.text("🔽 Остановить", `cmp:toggle:${id}`).row();
   } else {
-    kb.text("▶️ Запустить", `cmp:toggle:${id}`).row();
+    kb.text("🔼 Запустить", `cmp:toggle:${id}`).row();
   }
 
-  kb.text("✏️ Переименовать", `cmp:rename:${id}`).row();
+  kb.text("🔨 Переименовать", `cmp:rename:${id}`).row();
   kb.text("🗑 Удалить", `cmp:del:${id}`).row();
   kb.text("◀️ Назад", "campaigns:list").row();
 
@@ -98,15 +99,17 @@ export async function showCampaignChannels(ctx: BotContext, cmpId: number, edit 
   const kb = new InlineKeyboard();
   for (const ch of linked) {
     const label = ch.title || ch.username || ch.chat_id;
-    kb.text(`❌ ${label}`, `cmpch:unlink:${cmpId}:${ch.id}`).row();
+    kb.text(`🚫 ${label}`, `cmpch:unlink:${cmpId}:${ch.id}`).row();
   }
   kb.text("➕ Привязать канал", `cmpch:link:${cmpId}`).row();
   kb.text("◀️ Назад", `cmp:${cmpId}`).row();
 
   const text = [
-    `📢 <b>Каналы кампании «${cmp.name}»</b>`,
+    `${e("📢", E.CHANNELS)} <b>Каналы кампании «${cmp.name}»</b>`,
     "",
-    linked.length ? "Нажмите ❌ чтобы отвязать." : "Нет привязанных каналов.",
+    linked.length
+      ? `Нажмите ${e("🚫", E.CANCEL)} чтобы отвязать.`
+      : "Нет привязанных каналов.",
   ].join("\n");
 
   if (edit && ctx.callbackQuery) {
@@ -136,32 +139,9 @@ export async function showLinkChannelPicker(ctx: BotContext, cmpId: number) {
   });
 }
 
-/* ═══════════════ Schedule Picker ═══════════════════════════ */
 
-export async function showScheduleChoice(ctx: BotContext, cmpId: number) {
-  const bot = BOT_USERNAME;
-  const kb = new InlineKeyboard();
 
-  if (bot) {
-    const tw = tgwidget(bot).date({ mode: "time" }).style({ liquidGlass: true, adoptTgPalette: true });
-    kb.url("🕐 Простое время", tw.url().replace("start=", `start=tw_ct_${cmpId}_`)).row();
-
-    const sw = tgwidget(bot).schedule({ format: "single" }).style({ liquidGlass: true, adoptTgPalette: true });
-    kb.url("📋 Подробное расписание", sw.url().replace("start=", `start=tw_cs_${cmpId}_`)).row();
-  } else {
-    kb.text("🕐 Простое время", `cmp:simpletime:${cmpId}`).row();
-    kb.text("📋 Подробное расписание", `cmp:dettime:${cmpId}`).row();
-  }
-
-  kb.text("◀️ Назад", `cmp:${cmpId}`).row();
-
-  await ctx.editMessageText("⏰ <b>Выберите тип расписания:</b>", {
-    reply_markup: kb,
-    parse_mode: "HTML",
-  });
-}
-
-/* ═══════════════ Broadcast Posts ═══════════════════════════ */
+/* ═══════════════ Broadcast Posts (Autospam) ════════════════ */
 
 export async function showBroadcastPosts(ctx: BotContext, cmpId: number, edit = true) {
   const cmp = db.getCampaign(cmpId);
@@ -171,13 +151,13 @@ export async function showBroadcastPosts(ctx: BotContext, cmpId: number, edit = 
 
   const kb = new InlineKeyboard();
   for (const p of posts) {
-    kb.text(`📄 ${p.label}`, `bp:${p.id}`).row();
+    kb.text(`📁 ${p.label}`, `bp:${p.id}`).row();
   }
   kb.text("➕ Добавить пост", `bp:add:${cmpId}`).row();
   kb.text("◀️ Назад", `cmp:${cmpId}`).row();
 
   const text = [
-    `📤 <b>Авторассылка «${cmp.name}»</b>`,
+    `${e("📨", E.AUTOSPAM)} <b>Автоспам «${cmp.name}»</b>`,
     "",
     `Постов: ${posts.length}`,
     posts.length ? "\nБот выбирает случайный пост без повторов подряд." : "",
@@ -195,17 +175,17 @@ export async function showBroadcastPostDetail(ctx: BotContext, postId: number) {
   if (!post) return;
 
   const kb = new InlineKeyboard()
-    .text("👁 Предпросмотр", `bp:preview:${postId}`)
+    .text("🔍 Предпросмотр", `bp:preview:${postId}`)
     .row()
     .text("🗑 Удалить", `bp:del:${postId}`)
     .row()
     .text("◀️ Назад", `bp:list:${post.campaign_id}`)
     .row();
 
-  await ctx.editMessageText(`📄 <b>${post.label}</b>\n\nПозиция: ${post.position + 1}`, {
-    reply_markup: kb,
-    parse_mode: "HTML",
-  });
+  await ctx.editMessageText(
+    `${e("📁", E.FILE)} <b>${post.label}</b>\n\nПозиция: ${post.position + 1}`,
+    { reply_markup: kb, parse_mode: "HTML" },
+  );
 }
 
 /* ═══════════════════ Plan Posts ════════════════════════════ */
@@ -222,19 +202,19 @@ export async function showPlanPosts(ctx: BotContext, cmpId: number, edit = true)
       ? "🤖"
       : p.send_time
         ? `${p.send_date || "?"} ${p.send_time}`
-        : "⏳";
+        : "🕓";
     kb.text(`${tl} ${p.label}`, `pp:${p.id}`).row();
   }
   kb.text("➕ Добавить пост", `pp:add:${cmpId}`).row();
 
   if (posts.length >= 2) {
-    kb.text("📅 Растянуть по дням", `pp:stretch:${cmpId}`).row();
+    kb.text("🕓 Растянуть по дням", `pp:stretch:${cmpId}`).row();
   }
 
   kb.text("◀️ Назад", `cmp:${cmpId}`).row();
 
   const text = [
-    `📝 <b>План постов «${cmp.name}»</b>`,
+    `${e("📥", E.PLAN)} <b>План постов «${cmp.name}»</b>`,
     `Дефолт-время: ${cmp.default_time}`,
     "",
     `В очереди: ${posts.length}`,
@@ -252,28 +232,21 @@ export async function showPlanPostDetail(ctx: BotContext, postId: number, edit =
   if (!post) return;
 
   const cmp = db.getCampaign(post.campaign_id);
-  const bot = BOT_USERNAME;
 
   const text = [
-    `📄 <b>${post.label}</b>`,
+    `${e("📁", E.FILE)} <b>${post.label}</b>`,
     "",
-    `📅 Дата: ${post.send_date || "не задана"}`,
-    `⏰ Время: ${post.send_time || (post.is_auto_time ? `авто (${cmp?.default_time || "12:00"})` : "не задано")}`,
-    `Статус: ${post.is_sent ? "✅ Отправлен" : "⏳ В очереди"}`,
+    `${e("🕓", E.SCHEDULE)} Дата: ${post.send_date || "не задана"}`,
+    `${e("🕓", E.SCHEDULE)} Время: ${post.send_time || (post.is_auto_time ? `авто (${cmp?.default_time || "12:00"})` : "не задано")}`,
+    `Статус: ${post.is_sent ? `${e("✅", E.ACTIVE)} Отправлен` : `${e("🕓", E.SCHEDULE)} В очереди`}`,
   ].join("\n");
 
-  const kb = new InlineKeyboard();
-
-  if (bot) {
-    const dtw = tgwidget(bot).date({ mode: "datetime" }).style({ liquidGlass: true, adoptTgPalette: true });
-    kb.url("📅 Дата и время", dtw.url().replace("start=", `start=tw_pdt_${postId}_`)).row();
-  } else {
-    kb.text("📅 Дата", `pp:setdate:${postId}`).row();
-    kb.text("⏰ Время", `pp:settime:${postId}`).row();
-  }
-
-  kb.text(post.is_auto_time ? "🤖 АВТО ✓" : "🤖 АВТО", `pp:auto:${postId}`).row();
-  kb.text("👁 Предпросмотр", `pp:preview:${postId}`).row();
+  const kb = new InlineKeyboard()
+    .text("🕓 Дата и время", `pp:datetime:${postId}`)
+    .row()
+    .text(post.is_auto_time ? "🤖 АВТО ✓" : "🤖 АВТО", `pp:auto:${postId}`)
+    .row();
+  kb.text("🔍 Предпросмотр", `pp:preview:${postId}`).row();
   kb.text("🗑 Удалить", `pp:del:${postId}`).row();
   kb.text("◀️ Назад", `pp:list:${post.campaign_id}`).row();
 
@@ -297,7 +270,7 @@ export async function showStretchConfig(ctx: BotContext, cmpId: number) {
   kb.text("◀️ Назад", `pp:list:${cmpId}`).row();
 
   await ctx.editMessageText(
-    `📅 <b>Растянуть ${unsent.length} постов</b>\n\nВыберите период:`,
+    `${e("🕓", E.SCHEDULE)} <b>Растянуть ${unsent.length} постов</b>\n\nВыберите период:`,
     { reply_markup: kb, parse_mode: "HTML" },
   );
 }
