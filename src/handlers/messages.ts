@@ -1,4 +1,7 @@
+import { InlineKeyboard } from "grammy";
+import { tgwidget, parseDate } from "tgwidget";
 import type { BotContext } from "../types";
+import { BOT_USERNAME } from "../config";
 import { isAdmin } from "../utils/admin";
 import { e, E } from "../utils/emoji";
 import { getAwaiting, clearAwaiting, setAwaiting } from "./callbacks";
@@ -138,9 +141,18 @@ export async function handleMessage(ctx: BotContext) {
         id: state.id,
         pending: { ...state.pending, days },
       });
+
+      const kb = new InlineKeyboard();
+      if (BOT_USERNAME) {
+        const tw = tgwidget(BOT_USERNAME).date({ mode: "time" }).style({ liquidGlass: true, adoptTgPalette: true });
+        kb.webApp("Выбрать время", tw.url()).icon(E.SCHEDULE).row();
+      }
+      kb.text("Отмена", `bp:list:${state.id}`).icon(E.CANCEL).row();
+
       await ctx.reply(
-        `${e("🕓", E.SCHEDULE)} Теперь введите время постинга в формате <code>ЧЧ:ММ</code>:`,
-        { parse_mode: "HTML" },
+        `${e("🕓", E.SCHEDULE)} <b>Время постинга</b>\n\n` +
+          `Выберите через виджет или введите в формате <code>ЧЧ:ММ</code>:`,
+        { reply_markup: kb, parse_mode: "HTML" },
       );
       return;
     }
@@ -148,16 +160,38 @@ export async function handleMessage(ctx: BotContext) {
     /* ── Add broadcast post (step 3: enter time) ─────── */
     case "bp_enter_time": {
       if (!state.id || !state.pending || !state.pending.days) return;
-      if (!msg.text) {
-        await ctx.reply(`${e("⚠️", E.WARNING)} Введите время в формате ЧЧ:ММ:`, { parse_mode: "HTML" });
+
+      let time: string | null = null;
+
+      // WebApp data from tgwidget
+      if (msg.web_app_data?.data) {
+        try {
+          const parsed = parseDate(msg.web_app_data.data, { mode: "time" });
+          if (parsed?.time) time = parsed.time;
+        } catch { /* ignore */ }
+      }
+
+      // /start payload from tgwidget
+      if (!time && msg.text?.startsWith("/start ")) {
+        try {
+          const parsed = parseDate(msg.text.slice(7), { mode: "time" });
+          if (parsed?.time) time = parsed.time;
+        } catch { /* ignore */ }
+      }
+
+      // Manual text input (HH:MM)
+      if (!time && msg.text) {
+        const m = msg.text.trim().match(/^(\d{1,2}):(\d{2})$/);
+        if (m?.[1] && m[2]) {
+          time = `${m[1].padStart(2, "0")}:${m[2]}`;
+        }
+      }
+
+      if (!time) {
+        await ctx.reply(`${e("⚠️", E.WARNING)} Формат: ЧЧ:ММ (например 09:30) или выберите через виджет.`, { parse_mode: "HTML" });
         return;
       }
-      const m = msg.text.trim().match(/^(\d{1,2}):(\d{2})$/);
-      if (!m?.[1] || !m[2]) {
-        await ctx.reply(`${e("⚠️", E.WARNING)} Формат: ЧЧ:ММ (например 09:30):`, { parse_mode: "HTML" });
-        return;
-      }
-      const time = `${m[1].padStart(2, "0")}:${m[2]}`;
+
       try {
         db.addBroadcastPost(
           state.id,
