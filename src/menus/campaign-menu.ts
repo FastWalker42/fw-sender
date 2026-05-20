@@ -1,7 +1,13 @@
 import { InlineKeyboard } from "grammy";
+import type { Api } from "grammy";
 import type { BotContext } from "../types";
 import { e, E } from "../utils/emoji";
 import * as db from "../db";
+
+/** Delete a message by chatId + messageId, silently ignoring errors */
+export async function safeDelete(api: Api, chatId: number | string, msgId: number) {
+  try { await api.deleteMessage(chatId, msgId); } catch { /* already deleted */ }
+}
 
 /* ═══════════════════ Campaign List ═════════════════════════ */
 
@@ -167,17 +173,28 @@ export async function showBroadcastPostDetail(ctx: BotContext, postId: number) {
   const post = db.getBroadcastPost(postId);
   if (!post) return;
 
-  const kb = new InlineKeyboard()
-    .text("Предпросмотр", `bp:preview:${postId}`).icon(E.SEARCH)
-    .row()
-    .text("Удалить", `bp:del:${postId}`).icon(E.DELETE)
-    .row()
-    .text("Назад", `bp:list:${post.campaign_id}`).icon(E.BACK)
-    .row();
+  const chatId = ctx.chat!.id;
+
+  // Send preview (the actual post content)
+  let previewMsgId: number;
+  try {
+    const sent = await ctx.api.copyMessage(chatId, parseInt(post.chat_id), post.message_id);
+    previewMsgId = sent.message_id;
+  } catch {
+    await ctx.reply(`${e("⚠️", E.WARNING)} Не удалось загрузить пост.`, { parse_mode: "HTML" });
+    return;
+  }
 
   const remaining = post.total_days - post.days_sent;
 
-  await ctx.editMessageText(
+  const kb = new InlineKeyboard()
+    .text("Удалить", `bp:del:${postId}:${previewMsgId}`).icon(E.DELETE)
+    .row()
+    .text("Назад", `bp:back:${post.campaign_id}:${previewMsgId}`).icon(E.BACK)
+    .row();
+
+  await ctx.api.sendMessage(
+    chatId,
     [
       `${e("📁", E.FILE)} <b>${post.label}</b>`,
       "",
@@ -185,7 +202,7 @@ export async function showBroadcastPostDetail(ctx: BotContext, postId: number) {
       `${e("🕓", E.SCHEDULE)} Время: ${post.send_time}`,
       `Осталось дней: ${remaining}`,
     ].join("\n"),
-    { reply_markup: kb, parse_mode: "HTML" },
+    { reply_markup: kb, parse_mode: "HTML", reply_parameters: { message_id: previewMsgId } },
   );
 }
 
@@ -230,11 +247,22 @@ export async function showPlanPosts(ctx: BotContext, cmpId: number, edit = true)
   }
 }
 
-export async function showPlanPostDetail(ctx: BotContext, postId: number, edit = true) {
+export async function showPlanPostDetail(ctx: BotContext, postId: number) {
   const post = db.getPlanPost(postId);
   if (!post) return;
 
   const cmp = db.getCampaign(post.campaign_id);
+  const chatId = ctx.chat!.id;
+
+  // Send preview (the actual post content)
+  let previewMsgId: number;
+  try {
+    const sent = await ctx.api.copyMessage(chatId, parseInt(post.chat_id), post.message_id);
+    previewMsgId = sent.message_id;
+  } catch {
+    await ctx.reply(`${e("⚠️", E.WARNING)} Не удалось загрузить пост.`, { parse_mode: "HTML" });
+    return;
+  }
 
   const text = [
     `${e("📁", E.FILE)} <b>${post.label}</b>`,
@@ -245,19 +273,18 @@ export async function showPlanPostDetail(ctx: BotContext, postId: number, edit =
   ].join("\n");
 
   const kb = new InlineKeyboard()
-    .text("Дата и время", `pp:datetime:${postId}`).icon(E.SCHEDULE)
+    .text("Дата и время", `pp:datetime:${postId}:${previewMsgId}`).icon(E.SCHEDULE)
     .row()
-    .text(post.is_auto_time ? "АВТО ✓" : "АВТО", `pp:auto:${postId}`).icon(E.ROBOT)
+    .text(post.is_auto_time ? "АВТО ✓" : "АВТО", `pp:auto:${postId}:${previewMsgId}`).icon(E.ROBOT)
     .row();
-  kb.text("Предпросмотр", `pp:preview:${postId}`).icon(E.SEARCH).row();
-  kb.text("Удалить", `pp:del:${postId}`).icon(E.DELETE).row();
-  kb.text("Назад", `pp:list:${post.campaign_id}`).icon(E.BACK).row();
+  kb.text("Удалить", `pp:del:${postId}:${previewMsgId}`).icon(E.DELETE).row();
+  kb.text("Назад", `pp:back:${post.campaign_id}:${previewMsgId}`).icon(E.BACK).row();
 
-  if (edit && ctx.callbackQuery) {
-    await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "HTML" });
-  } else {
-    await ctx.reply(text, { reply_markup: kb, parse_mode: "HTML" });
-  }
+  await ctx.api.sendMessage(
+    chatId,
+    text,
+    { reply_markup: kb, parse_mode: "HTML", reply_parameters: { message_id: previewMsgId } },
+  );
 }
 
 export async function showStretchConfig(ctx: BotContext, cmpId: number) {
