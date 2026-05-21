@@ -6,6 +6,7 @@ import { BOT_USERNAME } from "../config";
 import { e, E } from "../utils/emoji";
 import * as db from "../db";
 import { showCampaignDetail, showPlanPostDetail, showBroadcastGroupDetail, safeDelete } from "../menus/campaign-menu";
+import { formatGroupSchedule } from "../utils/schedule";
 
 type Conv = Conversation<BotContext, BotContext>;
 
@@ -48,20 +49,21 @@ export async function scheduleConversation(conversation: Conv, ctx: BotContext) 
     // WebApp data from tgwidget
     if (update.message?.web_app_data?.data) {
       const raw = update.message.web_app_data.data;
-      try {
-        const parsed = parseDate(raw, { mode: "time" });
-        if (parsed) {
-          db.updateCampaign(cmpId, { schedule_type: "simple", schedule_value: parsed.time });
-          await update.reply(`${e("✅", E.CONFIRM)} Расписание: ежедневно в ${parsed.time}`, { parse_mode: "HTML" });
-          await showCampaignDetail(bc(update), cmpId, false);
-          return;
-        }
-      } catch { /* not a time, try schedule */ }
+      // Try schedule first (28-char string is unambiguous)
       try {
         const parsed = parseSchedule(raw, { format: "single" });
         if (parsed) {
           db.updateCampaign(cmpId, { schedule_type: "detailed", schedule_value: raw });
           await update.reply(`${e("✅", E.CONFIRM)} Подробное расписание обновлено.`, { parse_mode: "HTML" });
+          await showCampaignDetail(bc(update), cmpId, false);
+          return;
+        }
+      } catch { /* not a schedule, try time */ }
+      try {
+        const parsed = parseDate(raw, { mode: "time" });
+        if (parsed && parsed.time) {
+          db.updateCampaign(cmpId, { schedule_type: "simple", schedule_value: parsed.time });
+          await update.reply(`${e("✅", E.CONFIRM)} Расписание: ежедневно в ${parsed.time}`, { parse_mode: "HTML" });
           await showCampaignDetail(bc(update), cmpId, false);
           return;
         }
@@ -71,20 +73,21 @@ export async function scheduleConversation(conversation: Conv, ctx: BotContext) 
     // /start with tgwidget payload
     if (update.message?.text?.startsWith("/start ")) {
       const payload = update.message.text.slice(7);
-      try {
-        const parsed = parseDate(payload, { mode: "time" });
-        if (parsed) {
-          db.updateCampaign(cmpId, { schedule_type: "simple", schedule_value: parsed.time });
-          await update.reply(`${e("✅", E.CONFIRM)} Расписание: ежедневно в ${parsed.time}`, { parse_mode: "HTML" });
-          await showCampaignDetail(bc(update), cmpId, false);
-          return;
-        }
-      } catch { /* try schedule */ }
+      // Try schedule first
       try {
         const parsed = parseSchedule(payload, { format: "single" });
         if (parsed) {
           db.updateCampaign(cmpId, { schedule_type: "detailed", schedule_value: payload });
           await update.reply(`${e("✅", E.CONFIRM)} Подробное расписание обновлено.`, { parse_mode: "HTML" });
+          await showCampaignDetail(bc(update), cmpId, false);
+          return;
+        }
+      } catch { /* try time */ }
+      try {
+        const parsed = parseDate(payload, { mode: "time" });
+        if (parsed && parsed.time) {
+          db.updateCampaign(cmpId, { schedule_type: "simple", schedule_value: parsed.time });
+          await update.reply(`${e("✅", E.CONFIRM)} Расписание: ежедневно в ${parsed.time}`, { parse_mode: "HTML" });
           await showCampaignDetail(bc(update), cmpId, false);
           return;
         }
@@ -311,7 +314,7 @@ export async function broadcastGroupTimeConversation(conversation: Conv, ctx: Bo
 
   await ctx.editMessageText(
     `${e("🕓", E.SCHEDULE)} <b>Изменить время группы «${group.label}»</b>\n\n` +
-      `Текущее: ${group.schedule_type === "detailed" ? "расписание по дням" : group.send_time + " ежедневно"}\n\n` +
+      `Текущее: ${formatGroupSchedule(group)}\n\n` +
       `Выберите виджет или введите время в формате <code>ЧЧ:ММ</code>`,
     { reply_markup: kb, parse_mode: "HTML" },
   );
@@ -329,22 +332,22 @@ export async function broadcastGroupTimeConversation(conversation: Conv, ctx: Bo
     // WebApp data from tgwidget
     if (update.message?.web_app_data?.data) {
       const raw = update.message.web_app_data.data;
-      // Try time first
-      try {
-        const parsed = parseDate(raw, { mode: "time" });
-        if (parsed) {
-          db.updateBroadcastGroup(groupId, { schedule_type: "simple", schedule_value: "", send_time: parsed.time });
-          await update.reply(`${e("✅", E.CONFIRM)} Время: ежедневно в ${parsed.time}`, { parse_mode: "HTML" });
-          await showBroadcastGroupDetail(bc(update), groupId);
-          return;
-        }
-      } catch { /* not a time, try schedule */ }
-      // Try schedule
+      // Try schedule first (28-char string is unambiguous)
       try {
         const parsed = parseSchedule(raw, { format: "single" });
         if (parsed) {
           db.updateBroadcastGroup(groupId, { schedule_type: "detailed", schedule_value: raw });
           await update.reply(`${e("✅", E.CONFIRM)} Расписание по дням обновлено.`, { parse_mode: "HTML" });
+          await showBroadcastGroupDetail(bc(update), groupId);
+          return;
+        }
+      } catch { /* not a schedule, try time */ }
+      // Try time
+      try {
+        const parsed = parseDate(raw, { mode: "time" });
+        if (parsed && parsed.time) {
+          db.updateBroadcastGroup(groupId, { schedule_type: "simple", schedule_value: "", send_time: parsed.time });
+          await update.reply(`${e("✅", E.CONFIRM)} Время: ежедневно в ${parsed.time}`, { parse_mode: "HTML" });
           await showBroadcastGroupDetail(bc(update), groupId);
           return;
         }
@@ -354,20 +357,21 @@ export async function broadcastGroupTimeConversation(conversation: Conv, ctx: Bo
     // /start with tgwidget payload
     if (update.message?.text?.startsWith("/start ")) {
       const payload = update.message.text.slice(7);
-      try {
-        const parsed = parseDate(payload, { mode: "time" });
-        if (parsed) {
-          db.updateBroadcastGroup(groupId, { schedule_type: "simple", schedule_value: "", send_time: parsed.time });
-          await update.reply(`${e("✅", E.CONFIRM)} Время: ежедневно в ${parsed.time}`, { parse_mode: "HTML" });
-          await showBroadcastGroupDetail(bc(update), groupId);
-          return;
-        }
-      } catch { /* try schedule */ }
+      // Try schedule first
       try {
         const parsed = parseSchedule(payload, { format: "single" });
         if (parsed) {
           db.updateBroadcastGroup(groupId, { schedule_type: "detailed", schedule_value: payload });
           await update.reply(`${e("✅", E.CONFIRM)} Расписание по дням обновлено.`, { parse_mode: "HTML" });
+          await showBroadcastGroupDetail(bc(update), groupId);
+          return;
+        }
+      } catch { /* try time */ }
+      try {
+        const parsed = parseDate(payload, { mode: "time" });
+        if (parsed && parsed.time) {
+          db.updateBroadcastGroup(groupId, { schedule_type: "simple", schedule_value: "", send_time: parsed.time });
+          await update.reply(`${e("✅", E.CONFIRM)} Время: ежедневно в ${parsed.time}`, { parse_mode: "HTML" });
           await showBroadcastGroupDetail(bc(update), groupId);
           return;
         }
