@@ -5,7 +5,7 @@ import { showMainMenu } from "../menus/main-menu";
 import { getAwaiting } from "./callbacks";
 import { handleMessage } from "./messages";
 
-const TGWIDGET_STATES = new Set(["bp_enter_time", "pp_enter_time"]);
+const TGWIDGET_STATES = new Set(["bg_enter_time", "pp_enter_time"]);
 
 export async function handleStart(ctx: BotContext) {
   if (!isAdmin(ctx)) {
