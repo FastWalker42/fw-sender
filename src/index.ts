@@ -34,7 +34,10 @@ bot.use(createConversation(scheduleConversation));
 bot.use(createConversation(defaultTimeConversation));
 bot.use(createConversation(planDatetimeConversation));
 
-// Admin guard for all handlers
+// Ignore channel_post updates — the bot must not react to posts in managed channels
+bot.on("channel_post", () => {});
+
+// Admin guard for all remaining handlers
 bot.use(adminOnly);
 
 // Commands
