@@ -50,27 +50,29 @@ export function initDb() {
   // ── Broadcast groups (replaces broadcast_posts) ─────────
   db.exec(`
     CREATE TABLE IF NOT EXISTS broadcast_groups (
-      id           INTEGER PRIMARY KEY AUTOINCREMENT,
-      campaign_id  INTEGER NOT NULL,
-      label        TEXT    NOT NULL DEFAULT 'Группа',
-      position     INTEGER NOT NULL DEFAULT 0,
-      send_time    TEXT    NOT NULL DEFAULT '12:00',
-      total_days   INTEGER NOT NULL DEFAULT 1,
-      days_sent    INTEGER NOT NULL DEFAULT 0,
-      last_post_id INTEGER,
-      created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      campaign_id    INTEGER NOT NULL,
+      label          TEXT    NOT NULL DEFAULT 'Группа',
+      position       INTEGER NOT NULL DEFAULT 0,
+      send_time      TEXT    NOT NULL DEFAULT '12:00',
+      total_days     INTEGER NOT NULL DEFAULT 1,
+      days_sent      INTEGER NOT NULL DEFAULT 0,
+      last_post_id   INTEGER,
+      last_sent_date TEXT,
+      created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )
   `);
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS broadcast_group_posts (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      group_id   INTEGER NOT NULL,
-      chat_id    TEXT    NOT NULL,
-      message_id INTEGER NOT NULL,
-      label      TEXT    NOT NULL DEFAULT 'Пост',
-      created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_id     INTEGER NOT NULL,
+      chat_id      TEXT    NOT NULL,
+      message_id   INTEGER NOT NULL,
+      label        TEXT    NOT NULL DEFAULT 'Пост',
+      reply_markup TEXT,
+      created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (group_id) REFERENCES broadcast_groups(id) ON DELETE CASCADE,
       UNIQUE(group_id, chat_id, message_id)
     )
@@ -100,6 +102,7 @@ export function initDb() {
       is_auto_time INTEGER NOT NULL DEFAULT 0,
       is_sent      INTEGER NOT NULL DEFAULT 0,
       position     INTEGER NOT NULL DEFAULT 0,
+      reply_markup TEXT,
       created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE,
       UNIQUE(chat_id, message_id, campaign_id)
@@ -241,7 +244,8 @@ export function updateBroadcastGroup(
 }
 
 export function incrementBroadcastGroupDaysSent(id: number) {
-  db.query("UPDATE broadcast_groups SET days_sent = days_sent + 1 WHERE id = ?").run(id);
+  const today = new Date().toISOString().slice(0, 10);
+  db.query("UPDATE broadcast_groups SET days_sent = days_sent + 1, last_sent_date = ? WHERE id = ?").run(today, id);
 }
 
 export function removeBroadcastGroup(id: number) {
@@ -258,10 +262,10 @@ export function getBroadcastGroupPost(id: number): BroadcastGroupPost | null {
   return db.query("SELECT * FROM broadcast_group_posts WHERE id = ?").get(id) as BroadcastGroupPost | null;
 }
 
-export function addBroadcastGroupPost(groupId: number, chatId: string, messageId: number, label: string): BroadcastGroupPost {
+export function addBroadcastGroupPost(groupId: number, chatId: string, messageId: number, label: string, replyMarkup?: string | null): BroadcastGroupPost {
   const r = db.query(
-    "INSERT INTO broadcast_group_posts (group_id, chat_id, message_id, label) VALUES (?,?,?,?)",
-  ).run(groupId, chatId, messageId, label);
+    "INSERT INTO broadcast_group_posts (group_id, chat_id, message_id, label, reply_markup) VALUES (?,?,?,?,?)",
+  ).run(groupId, chatId, messageId, label, replyMarkup ?? null);
   return getBroadcastGroupPost(Number(r.lastInsertRowid))!;
 }
 
@@ -282,15 +286,17 @@ export function logBroadcastSend(campaignId: number, groupId: number, postId: nu
 
 /** All due broadcast groups across all active campaigns for current time */
 export function getDueBroadcastGroups(currentTime: string): (BroadcastGroup & { channel_chat_ids: string[] })[] {
+  const today = new Date().toISOString().slice(0, 10);
   const rows = db.query(`
     SELECT bg.*
     FROM broadcast_groups bg
     JOIN campaigns cmp ON cmp.id = bg.campaign_id
     WHERE cmp.is_active = 1
       AND bg.days_sent < bg.total_days
-      AND bg.send_time = ?
+      AND bg.send_time <= ?
+      AND (bg.last_sent_date IS NULL OR bg.last_sent_date < ?)
     ORDER BY bg.campaign_id, bg.position
-  `).all(currentTime) as BroadcastGroup[];
+  `).all(currentTime, today) as BroadcastGroup[];
 
   return rows.map((bg) => {
     const channels = getCampaignChannels(bg.campaign_id);
@@ -325,11 +331,11 @@ export function getPlanPost(id: number): PlanPost | null {
   return db.query("SELECT * FROM plan_posts WHERE id = ?").get(id) as PlanPost | null;
 }
 
-export function addPlanPost(campaignId: number, chatId: string, messageId: number, label: string): PlanPost {
+export function addPlanPost(campaignId: number, chatId: string, messageId: number, label: string, replyMarkup?: string | null): PlanPost {
   const mx = db.query("SELECT COALESCE(MAX(position),-1) as m FROM plan_posts WHERE campaign_id = ?").get(campaignId) as { m: number };
   const r = db.query(
-    "INSERT INTO plan_posts (campaign_id, chat_id, message_id, label, position) VALUES (?,?,?,?,?)",
-  ).run(campaignId, chatId, messageId, label, mx.m + 1);
+    "INSERT INTO plan_posts (campaign_id, chat_id, message_id, label, position, reply_markup) VALUES (?,?,?,?,?,?)",
+  ).run(campaignId, chatId, messageId, label, mx.m + 1, replyMarkup ?? null);
   return getPlanPost(Number(r.lastInsertRowid))!;
 }
 

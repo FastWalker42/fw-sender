@@ -32,6 +32,7 @@ interface AwaitState {
     messageId: number;
     label: string;
     days?: number;
+    replyMarkup?: string | null;
   };
 }
 

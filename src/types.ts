@@ -38,6 +38,7 @@ export interface BroadcastGroup {
   total_days: number;
   days_sent: number;
   last_post_id: number | null;
+  last_sent_date: string | null;
   created_at: string;
 }
 
@@ -48,6 +49,7 @@ export interface BroadcastGroupPost {
   chat_id: string;
   message_id: number;
   label: string;
+  reply_markup: string | null;
   created_at: string;
 }
 
@@ -71,6 +73,7 @@ export interface PlanPost {
   is_auto_time: number;
   is_sent: number;
   position: number;
+  reply_markup: string | null;
   created_at: string;
 }
 

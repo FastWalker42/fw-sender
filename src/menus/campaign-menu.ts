@@ -240,9 +240,10 @@ export async function showBroadcastGroupPostPreview(ctx: BotContext, postId: num
 
   const chatId = ctx.chat!.id;
 
+  const bgpOpts = post.reply_markup ? { reply_markup: JSON.parse(post.reply_markup) } : {};
   let previewMsgId: number;
   try {
-    const sent = await ctx.api.copyMessage(chatId, parseInt(post.chat_id), post.message_id);
+    const sent = await ctx.api.copyMessage(chatId, parseInt(post.chat_id), post.message_id, bgpOpts);
     previewMsgId = sent.message_id;
   } catch {
     await ctx.reply(`${e("⚠️", E.WARNING)} Не удалось загрузить пост.`, { parse_mode: "HTML" });
@@ -310,10 +311,10 @@ export async function showPlanPostDetail(ctx: BotContext, postId: number) {
   const cmp = db.getCampaign(post.campaign_id);
   const chatId = ctx.chat!.id;
 
-  // Send preview (the actual post content)
+  const ppOpts = post.reply_markup ? { reply_markup: JSON.parse(post.reply_markup) } : {};
   let previewMsgId: number;
   try {
-    const sent = await ctx.api.copyMessage(chatId, parseInt(post.chat_id), post.message_id);
+    const sent = await ctx.api.copyMessage(chatId, parseInt(post.chat_id), post.message_id, ppOpts);
     previewMsgId = sent.message_id;
   } catch {
     await ctx.reply(`${e("⚠️", E.WARNING)} Не удалось загрузить пост.`, { parse_mode: "HTML" });
