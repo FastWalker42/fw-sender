@@ -114,6 +114,25 @@ export function initDb() {
     db.exec("DROP TABLE IF EXISTS broadcast_posts");
     console.log("[db] migrated: dropped old broadcast_posts table");
   }
+
+  // Migrate: recreate broadcast_send_log if it has old schema (no group_id column)
+  const logCols = db.query("PRAGMA table_info(broadcast_send_log)").all() as { name: string }[];
+  const hasGroupId = logCols.some((c) => c.name === "group_id");
+  if (!hasGroupId && logCols.length > 0) {
+    db.exec("DROP TABLE broadcast_send_log");
+    db.exec(`
+      CREATE TABLE broadcast_send_log (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        group_id    INTEGER NOT NULL,
+        post_id     INTEGER NOT NULL,
+        sent_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE,
+        FOREIGN KEY (group_id)    REFERENCES broadcast_groups(id) ON DELETE CASCADE
+      )
+    `);
+    console.log("[db] migrated: recreated broadcast_send_log with group_id column");
+  }
 }
 
 /* ═══════════════════════ Channels ══════════════════════════ */
