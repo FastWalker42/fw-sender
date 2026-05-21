@@ -208,6 +208,13 @@ export async function handleCallback(ctx: BotContext) {
     );
   }
 
+  if (data.startsWith("bg:time:")) {
+    const groupId = parseId(data, 2);
+    ctx.session.convPayload = String(groupId);
+    await ctx.conversation.enter("broadcastGroupTimeConversation");
+    return;
+  }
+
   if (data.startsWith("bg:del:")) {
     const groupId = parseId(data, 2);
     const group = db.getBroadcastGroup(groupId);

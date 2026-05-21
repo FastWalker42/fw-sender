@@ -50,15 +50,17 @@ export function initDb() {
   // ── Broadcast groups (replaces broadcast_posts) ─────────
   db.exec(`
     CREATE TABLE IF NOT EXISTS broadcast_groups (
-      id           INTEGER PRIMARY KEY AUTOINCREMENT,
-      campaign_id  INTEGER NOT NULL,
-      label        TEXT    NOT NULL DEFAULT 'Группа',
-      position     INTEGER NOT NULL DEFAULT 0,
-      send_time    TEXT    NOT NULL DEFAULT '12:00',
-      total_days   INTEGER NOT NULL DEFAULT 1,
-      days_sent    INTEGER NOT NULL DEFAULT 0,
-      last_post_id INTEGER,
-      created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      campaign_id     INTEGER NOT NULL,
+      label           TEXT    NOT NULL DEFAULT 'Группа',
+      position        INTEGER NOT NULL DEFAULT 0,
+      send_time       TEXT    NOT NULL DEFAULT '12:00',
+      schedule_type   TEXT    NOT NULL DEFAULT 'simple',
+      schedule_value  TEXT    NOT NULL DEFAULT '',
+      total_days      INTEGER NOT NULL DEFAULT 1,
+      days_sent       INTEGER NOT NULL DEFAULT 0,
+      last_post_id    INTEGER,
+      created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
     )
   `);
@@ -113,6 +115,14 @@ export function initDb() {
   if (oldTable) {
     db.exec("DROP TABLE IF EXISTS broadcast_posts");
     console.log("[db] migrated: dropped old broadcast_posts table");
+  }
+
+  // Migrate: add schedule_type/schedule_value columns to broadcast_groups if missing
+  const bgCols = db.query("PRAGMA table_info(broadcast_groups)").all() as { name: string }[];
+  if (bgCols.length > 0 && !bgCols.some((c) => c.name === "schedule_type")) {
+    db.exec("ALTER TABLE broadcast_groups ADD COLUMN schedule_type TEXT NOT NULL DEFAULT 'simple'");
+    db.exec("ALTER TABLE broadcast_groups ADD COLUMN schedule_value TEXT NOT NULL DEFAULT ''");
+    console.log("[db] migrated: added schedule_type/schedule_value to broadcast_groups");
   }
 
   // Migrate: recreate broadcast_send_log if it has old schema (no group_id column)
@@ -244,11 +254,13 @@ export function addBroadcastGroup(
 
 export function updateBroadcastGroup(
   id: number,
-  f: Partial<Pick<BroadcastGroup, "send_time" | "total_days" | "days_sent" | "label" | "position" | "last_post_id">>,
+  f: Partial<Pick<BroadcastGroup, "send_time" | "schedule_type" | "schedule_value" | "total_days" | "days_sent" | "label" | "position" | "last_post_id">>,
 ) {
   const s: string[] = [];
   const v: (string | number | null)[] = [];
   if (f.send_time !== undefined) { s.push("send_time = ?"); v.push(f.send_time); }
+  if (f.schedule_type !== undefined) { s.push("schedule_type = ?"); v.push(f.schedule_type); }
+  if (f.schedule_value !== undefined) { s.push("schedule_value = ?"); v.push(f.schedule_value); }
   if (f.total_days !== undefined) { s.push("total_days = ?"); v.push(f.total_days); }
   if (f.days_sent !== undefined) { s.push("days_sent = ?"); v.push(f.days_sent); }
   if (f.label !== undefined) { s.push("label = ?"); v.push(f.label); }
@@ -300,21 +312,46 @@ export function logBroadcastSend(campaignId: number, groupId: number, postId: nu
 }
 
 /** All due broadcast groups across all active campaigns for current time */
-export function getDueBroadcastGroups(currentTime: string): (BroadcastGroup & { channel_chat_ids: string[] })[] {
+export function getDueBroadcastGroups(currentTime: string, weekday: number): (BroadcastGroup & { channel_chat_ids: string[] })[] {
+  // Fetch all active groups that haven't exceeded total_days
   const rows = db.query(`
     SELECT bg.*
     FROM broadcast_groups bg
     JOIN campaigns cmp ON cmp.id = bg.campaign_id
     WHERE cmp.is_active = 1
       AND bg.days_sent < bg.total_days
-      AND bg.send_time = ?
     ORDER BY bg.campaign_id, bg.position
-  `).all(currentTime) as BroadcastGroup[];
+  `).all() as BroadcastGroup[];
 
-  return rows.map((bg) => {
+  // Filter by schedule
+  const due = rows.filter((bg) => {
+    if (bg.schedule_type === "detailed" && bg.schedule_value) {
+      const dayTime = getScheduleTimeForDay(bg.schedule_value, weekday);
+      return dayTime === currentTime;
+    }
+    return bg.send_time === currentTime;
+  });
+
+  return due.map((bg) => {
     const channels = getCampaignChannels(bg.campaign_id);
     return { ...bg, channel_chat_ids: channels.map((c) => c.chat_id) };
   });
+}
+
+/**
+ * Extract time for a specific weekday from 28-char tgwidget single schedule.
+ * Format: 7 × 4-char blocks (HHMM), "9999" = disabled.
+ * Weekday: 0=Mon, 1=Tue, ..., 6=Sun (JS getDay() returns 0=Sun, so we remap).
+ */
+export function getScheduleTimeForDay(scheduleValue: string, jsWeekday: number): string | null {
+  // JS weekday: 0=Sun,1=Mon,...,6=Sat → tgwidget: 0=Mon,...,6=Sun
+  const idx = jsWeekday === 0 ? 6 : jsWeekday - 1;
+  const offset = idx * 4;
+  const block = scheduleValue.slice(offset, offset + 4);
+  if (!block || block.length < 4 || block === "9999") return null;
+  const hh = block.slice(0, 2);
+  const mm = block.slice(2, 4);
+  return `${hh}:${mm}`;
 }
 
 /** Pick a random post from group, avoiding the last_post_id */

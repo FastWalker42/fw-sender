@@ -96,8 +96,9 @@ async function processBroadcasts(api: Api) {
   const hh = String(now.getHours()).padStart(2, "0");
   const mm = String(now.getMinutes()).padStart(2, "0");
   const currentTime = `${hh}:${mm}`;
+  const weekday = now.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
 
-  const dueGroups = db.getDueBroadcastGroups(currentTime);
+  const dueGroups = db.getDueBroadcastGroups(currentTime, weekday);
 
   for (const group of dueGroups) {
     if (group.channel_chat_ids.length === 0) continue;

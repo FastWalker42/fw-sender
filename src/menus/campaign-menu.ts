@@ -4,6 +4,7 @@ import type { BotContext } from "../types";
 import { e, E } from "../utils/emoji";
 import * as db from "../db";
 import * as userbot from "../userbot";
+import { formatGroupSchedule } from "../utils/schedule";
 
 /** Delete a message by chatId + messageId, silently ignoring errors */
 export async function safeDelete(api: Api, chatId: number | string, msgId: number) {
@@ -151,7 +152,8 @@ export async function showBroadcastGroups(ctx: BotContext, cmpId: number, edit =
   for (const g of groups) {
     const remaining = g.total_days - g.days_sent;
     const postCount = db.countBroadcastGroupPosts(g.id);
-    kb.text(`${g.label} (${g.send_time}, ${remaining} дн., ${postCount} пост.)`, `bg:${g.id}`).icon(E.PACKAGE).row();
+    const timeLabel = g.schedule_type === "detailed" ? "расп." : g.send_time;
+    kb.text(`${g.label} (${timeLabel}, ${remaining} дн., ${postCount} пост.)`, `bg:${g.id}`).icon(E.PACKAGE).row();
   }
   kb.text("Создать группу постов", `bg:add:${cmpId}`).icon(E.ADD).row();
   kb.text("Назад", `cmp:${cmpId}`).icon(E.BACK).row();
@@ -175,18 +177,21 @@ export async function showBroadcastGroupDetail(ctx: BotContext, groupId: number)
 
   const posts = db.getBroadcastGroupPosts(groupId);
   const remaining = group.total_days - group.days_sent;
+  const scheduleText = formatGroupSchedule(group);
 
   const text = [
     `${e("📦", E.PACKAGE)} <b>${group.label}</b>`,
     "",
     `Позиция: ${group.position + 1}`,
-    `${e("🕓", E.SCHEDULE)} Время: ${group.send_time}`,
+    `${e("🕓", E.SCHEDULE)} ${scheduleText}`,
     `Осталось дней: ${remaining}`,
     `Постов в группе: ${posts.length}`,
   ].join("\n");
 
   const kb = new InlineKeyboard()
     .text(`Посты (${posts.length})`, `bgp:list:${groupId}`).icon(E.FILE)
+    .row()
+    .text("Изменить время", `bg:time:${groupId}`).icon(E.SCHEDULE)
     .row()
     .text("Добавить пост", `bgp:add:${groupId}`).icon(E.ADD)
     .row()

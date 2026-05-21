@@ -35,6 +35,10 @@ export interface BroadcastGroup {
   label: string;
   position: number;
   send_time: string;
+  /** 'simple' = same time every day; 'detailed' = per-weekday tgwidget schedule */
+  schedule_type: "simple" | "detailed";
+  /** For detailed mode: 28-char tgwidget single schedule string */
+  schedule_value: string;
   total_days: number;
   days_sent: number;
   last_post_id: number | null;
