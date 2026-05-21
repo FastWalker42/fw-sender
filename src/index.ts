@@ -8,6 +8,7 @@ import { handleCallback } from "./handlers/callbacks";
 import { handleMessage } from "./handlers/messages";
 import { adminOnly } from "./utils/admin";
 import { startScheduler, stopScheduler } from "./scheduler";
+import { initUserbot } from "./userbot";
 import {
   scheduleConversation,
   defaultTimeConversation,
@@ -17,6 +18,9 @@ import {
 // Init database
 initDb();
 console.log("[db] initialized");
+
+// Init userbot (non-blocking)
+initUserbot().catch((err) => console.error("[userbot] init error:", err));
 
 // Create bot
 const bot = new Bot<BotContext>(BOT_TOKEN);

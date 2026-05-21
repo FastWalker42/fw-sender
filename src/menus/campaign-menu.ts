@@ -3,6 +3,7 @@ import type { Api } from "grammy";
 import type { BotContext } from "../types";
 import { e, E } from "../utils/emoji";
 import * as db from "../db";
+import * as userbot from "../userbot";
 
 /** Delete a message by chatId + messageId, silently ignoring errors */
 export async function safeDelete(api: Api, chatId: number | string, msgId: number) {
@@ -41,7 +42,7 @@ export async function showCampaignDetail(ctx: BotContext, id: number, edit = tru
   }
 
   const channels = db.getCampaignChannels(id);
-  const bPosts = db.getBroadcastPosts(id);
+  const groups = db.getBroadcastGroups(id);
   const pPosts = db.getUnsentPlanPosts(id);
   const status = cmp.is_active
     ? `${e("✅", E.ACTIVE)} Активна`
@@ -56,12 +57,12 @@ export async function showCampaignDetail(ctx: BotContext, id: number, edit = tru
     `${status}`,
     `${e("🕓", E.SCHEDULE)} Дефолт-время плана: ${cmp.default_time}`,
     `${e("📢", E.CHANNELS)} Каналы: ${chNames}`,
-    `${e("📨", E.AUTOSPAM)} Автоспам: ${bPosts.length} постов`,
+    `${e("📨", E.AUTOSPAM)} Автоспам: ${groups.length} групп`,
     `${e("📥", E.PLAN)} План постов: ${pPosts.length} в очереди`,
   ].join("\n");
 
   const kb = new InlineKeyboard()
-    .text(`Автоспам (${bPosts.length})`, `bp:list:${id}`).icon(E.AUTOSPAM)
+    .text(`Автоспам (${groups.length})`, `bg:list:${id}`).icon(E.AUTOSPAM)
     .row()
     .text(`План постов (${pPosts.length})`, `pp:list:${id}`).icon(E.PLAN)
     .row()
@@ -138,28 +139,27 @@ export async function showLinkChannelPicker(ctx: BotContext, cmpId: number) {
   });
 }
 
+/* ═══════════════ Broadcast Groups (Autospam) ══════════════ */
 
-
-/* ═══════════════ Broadcast Posts (Autospam) ════════════════ */
-
-export async function showBroadcastPosts(ctx: BotContext, cmpId: number, edit = true) {
+export async function showBroadcastGroups(ctx: BotContext, cmpId: number, edit = true) {
   const cmp = db.getCampaign(cmpId);
   if (!cmp) return;
 
-  const posts = db.getBroadcastPosts(cmpId);
+  const groups = db.getBroadcastGroups(cmpId);
 
   const kb = new InlineKeyboard();
-  for (const p of posts) {
-    const remaining = p.total_days - p.days_sent;
-    kb.text(`${p.label} (${p.send_time}, ${remaining} дн.)`, `bp:${p.id}`).icon(E.FILE).row();
+  for (const g of groups) {
+    const remaining = g.total_days - g.days_sent;
+    const postCount = db.countBroadcastGroupPosts(g.id);
+    kb.text(`${g.label} (${g.send_time}, ${remaining} дн., ${postCount} пост.)`, `bg:${g.id}`).icon(E.PACKAGE).row();
   }
-  kb.text("Добавить пост", `bp:add:${cmpId}`).icon(E.ADD).row();
+  kb.text("Создать группу постов", `bg:add:${cmpId}`).icon(E.ADD).row();
   kb.text("Назад", `cmp:${cmpId}`).icon(E.BACK).row();
 
   const text = [
     `${e("📨", E.AUTOSPAM)} <b>Автоспам «${cmp.name}»</b>`,
     "",
-    `Постов: ${posts.length}`,
+    `Групп постов: ${groups.length}`,
   ].join("\n");
 
   if (edit && ctx.callbackQuery) {
@@ -169,13 +169,77 @@ export async function showBroadcastPosts(ctx: BotContext, cmpId: number, edit = 
   }
 }
 
-export async function showBroadcastPostDetail(ctx: BotContext, postId: number) {
-  const post = db.getBroadcastPost(postId);
+export async function showBroadcastGroupDetail(ctx: BotContext, groupId: number) {
+  const group = db.getBroadcastGroup(groupId);
+  if (!group) return;
+
+  const posts = db.getBroadcastGroupPosts(groupId);
+  const remaining = group.total_days - group.days_sent;
+
+  const text = [
+    `${e("📦", E.PACKAGE)} <b>${group.label}</b>`,
+    "",
+    `Позиция: ${group.position + 1}`,
+    `${e("🕓", E.SCHEDULE)} Время: ${group.send_time}`,
+    `Осталось дней: ${remaining}`,
+    `Постов в группе: ${posts.length}`,
+  ].join("\n");
+
+  const kb = new InlineKeyboard()
+    .text(`Посты (${posts.length})`, `bgp:list:${groupId}`).icon(E.FILE)
+    .row()
+    .text("Добавить пост", `bgp:add:${groupId}`).icon(E.ADD)
+    .row()
+    .text("Удалить группу", `bg:del:${groupId}`).icon(E.DELETE)
+    .row()
+    .text("Назад", `bg:list:${group.campaign_id}`).icon(E.BACK)
+    .row();
+
+  if (ctx.callbackQuery) {
+    await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "HTML" });
+  } else {
+    await ctx.reply(text, { reply_markup: kb, parse_mode: "HTML" });
+  }
+}
+
+export async function showBroadcastGroupPostList(ctx: BotContext, groupId: number) {
+  const group = db.getBroadcastGroup(groupId);
+  if (!group) return;
+
+  const posts = db.getBroadcastGroupPosts(groupId);
+
+  const kb = new InlineKeyboard();
+  for (const p of posts) {
+    kb.text(p.label, `bgp:view:${p.id}`).icon(E.FILE).row();
+  }
+  kb.text("Добавить пост", `bgp:add:${groupId}`).icon(E.ADD).row();
+  kb.text("Назад", `bg:${groupId}`).icon(E.BACK).row();
+
+  const text = [
+    `${e("📁", E.FILE)} <b>Посты группы «${group.label}»</b>`,
+    "",
+    `Всего: ${posts.length}`,
+    posts.length > 1
+      ? "При рассылке выбирается случайный пост (не повторяя предыдущий)."
+      : "",
+  ].join("\n");
+
+  if (ctx.callbackQuery) {
+    await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "HTML" });
+  } else {
+    await ctx.reply(text, { reply_markup: kb, parse_mode: "HTML" });
+  }
+}
+
+export async function showBroadcastGroupPostPreview(ctx: BotContext, postId: number) {
+  const post = db.getBroadcastGroupPost(postId);
   if (!post) return;
+
+  const group = db.getBroadcastGroup(post.group_id);
+  if (!group) return;
 
   const chatId = ctx.chat!.id;
 
-  // Send preview (the actual post content)
   let previewMsgId: number;
   try {
     const sent = await ctx.api.copyMessage(chatId, parseInt(post.chat_id), post.message_id);
@@ -185,23 +249,15 @@ export async function showBroadcastPostDetail(ctx: BotContext, postId: number) {
     return;
   }
 
-  const remaining = post.total_days - post.days_sent;
-
   const kb = new InlineKeyboard()
-    .text("Удалить", `bp:del:${postId}:${previewMsgId}`).icon(E.DELETE)
+    .text("Удалить пост", `bgp:del:${postId}:${previewMsgId}`).icon(E.DELETE)
     .row()
-    .text("Назад", `bp:back:${post.campaign_id}:${previewMsgId}`).icon(E.BACK)
+    .text("Назад", `bgp:back:${post.group_id}:${previewMsgId}`).icon(E.BACK)
     .row();
 
   await ctx.api.sendMessage(
     chatId,
-    [
-      `${e("📁", E.FILE)} <b>${post.label}</b>`,
-      "",
-      `Позиция: ${post.position + 1}`,
-      `${e("🕓", E.SCHEDULE)} Время: ${post.send_time}`,
-      `Осталось дней: ${remaining}`,
-    ].join("\n"),
+    `${e("📁", E.FILE)} <b>${post.label}</b>`,
     { reply_markup: kb, parse_mode: "HTML", reply_parameters: { message_id: previewMsgId } },
   );
 }
@@ -303,4 +359,29 @@ export async function showStretchConfig(ctx: BotContext, cmpId: number) {
     `${e("🕓", E.SCHEDULE)} <b>Растянуть ${unsent.length} постов</b>\n\nВыберите период:`,
     { reply_markup: kb, parse_mode: "HTML" },
   );
+}
+
+/* ═══════════════════ Userbot Menu ══════════════════════════ */
+
+export async function showUserbotMenu(ctx: BotContext, edit = true) {
+  const connected = userbot.isLoggedIn();
+
+  const text = connected
+    ? `${e("🤖", E.ROBOT)} <b>Юзербот</b>\n\nСтатус: ${e("✅", E.ACTIVE)} Подключён`
+    : `${e("🤖", E.ROBOT)} <b>Юзербот</b>\n\nСтатус: ${e("🚫", E.STOPPED)} Не подключён`;
+
+  const kb = new InlineKeyboard();
+  if (connected) {
+    kb.text("Отвязать сессию", "ub:logout").icon(E.DELETE).row();
+  } else {
+    kb.text("Войти по номеру", "ub:login").icon(E.LOCK).row();
+    kb.text("Импорт сессии (строка)", "ub:import").icon(E.FILE).row();
+  }
+  kb.text("Назад", "main").icon(E.BACK).row();
+
+  if (edit && ctx.callbackQuery) {
+    await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "HTML" });
+  } else {
+    await ctx.reply(text, { reply_markup: kb, parse_mode: "HTML" });
+  }
 }

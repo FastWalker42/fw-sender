@@ -28,23 +28,33 @@ export interface CampaignChannel {
   channel_id: number;
 }
 
-/** Auto-broadcast post with individual schedule */
-export interface BroadcastPost {
+/** Group of posts for auto-broadcast (random selection from group) */
+export interface BroadcastGroup {
   id: number;
   campaign_id: number;
-  chat_id: string;
-  message_id: number;
   label: string;
   position: number;
   send_time: string;
   total_days: number;
   days_sent: number;
+  last_post_id: number | null;
+  created_at: string;
+}
+
+/** Individual post within a broadcast group */
+export interface BroadcastGroupPost {
+  id: number;
+  group_id: number;
+  chat_id: string;
+  message_id: number;
+  label: string;
   created_at: string;
 }
 
 export interface BroadcastSendLog {
   id: number;
   campaign_id: number;
+  group_id: number;
   post_id: number;
   sent_at: string;
 }
