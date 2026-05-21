@@ -1,8 +1,10 @@
 import { TelegramClient, SentCode } from "@mtcute/bun";
-import { API_ID, API_HASH } from "../config";
+import { API_ID, API_HASH, BOT_ID, BOT_USERNAME } from "../config";
 
 let client: TelegramClient | null = null;
 let loggedIn = false;
+let userbotId: number | null = null;
+let botRelayReady = false;
 
 /** Pending sign-in state (phone code hash) */
 let pendingSignIn: { phone: string; phoneCodeHash: string } | null = null;
@@ -37,10 +39,13 @@ export async function initUserbot(): Promise<boolean> {
     await client.connect();
     const me = await client.getMe();
     loggedIn = true;
+    userbotId = me.id;
     console.log(`[userbot] connected as ${me.displayName}`);
+    initBotRelay().catch((err) => console.error("[userbot] initBotRelay error:", err));
     return true;
   } catch {
     loggedIn = false;
+    userbotId = null;
     console.log("[userbot] no active session");
     return false;
   }
@@ -52,6 +57,30 @@ export function getClient(): TelegramClient | null {
 
 export function isLoggedIn(): boolean {
   return loggedIn;
+}
+
+export function getUserbotId(): number | null {
+  return userbotId;
+}
+
+export function isBotRelayReady(): boolean {
+  return botRelayReady;
+}
+
+async function initBotRelay(): Promise<void> {
+  if (!client || !loggedIn || !BOT_USERNAME) {
+    console.log("[userbot] relay disabled: missing BOT_USERNAME or not logged in");
+    return;
+  }
+  try {
+    await client.resolvePeer("@" + BOT_USERNAME);
+    await client.sendText(BOT_ID, ".");
+    botRelayReady = true;
+    console.log("[userbot] bot relay initialized");
+  } catch (err) {
+    console.error("[userbot] failed to init bot relay:", err);
+    botRelayReady = false;
+  }
 }
 
 export async function sendCode(phone: string): Promise<void> {
@@ -71,7 +100,9 @@ export async function signIn(code: string): Promise<string> {
       phoneCode: code,
     });
     loggedIn = true;
+    userbotId = user.id;
     pendingSignIn = null;
+    initBotRelay().catch((err2) => console.error("[userbot] initBotRelay error:", err2));
     return user.displayName;
   } catch (err: any) {
     if (err?.text === "SESSION_PASSWORD_NEEDED") {
@@ -85,7 +116,9 @@ export async function checkPassword(password: string): Promise<string> {
   if (!client) throw new Error("No client");
   const user = await client.checkPassword(password);
   loggedIn = true;
+  userbotId = user.id;
   pendingSignIn = null;
+  initBotRelay().catch((err) => console.error("[userbot] initBotRelay error:", err));
   return user.displayName;
 }
 
@@ -95,6 +128,8 @@ export async function importStringSession(sessionString: string): Promise<string
   await client.importSession(sessionString);
   const me = await client.getMe();
   loggedIn = true;
+  userbotId = me.id;
+  initBotRelay().catch((err) => console.error("[userbot] initBotRelay error:", err));
   return me.displayName;
 }
 
@@ -109,6 +144,8 @@ export async function logout(): Promise<void> {
     client = null;
   }
   loggedIn = false;
+  userbotId = null;
+  botRelayReady = false;
   pendingSignIn = null;
   // Remove session file
   try {
@@ -128,6 +165,22 @@ export async function forwardToChannel(
   await c.forwardMessagesById({
     fromChatId,
     messages: [messageId],
+    toChatId: numericId,
+    noAuthor: true,
+  });
+}
+
+export async function relayViaBot(
+  botMsgId: number,
+  toChatId: string,
+): Promise<void> {
+  const c = getClient();
+  if (!c) throw new Error("Userbot not connected");
+  if (!botRelayReady) throw new Error("Bot relay not initialized");
+  const numericId = parseInt(toChatId, 10);
+  await c.forwardMessagesById({
+    fromChatId: BOT_ID,
+    messages: [botMsgId],
     toChatId: numericId,
     noAuthor: true,
   });

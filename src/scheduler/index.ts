@@ -35,11 +35,21 @@ export function stopScheduler() {
 }
 
 async function sendToChannel(api: Api, chatId: string, fromChatId: string, messageId: number): Promise<void> {
-  if (userbot.isLoggedIn()) {
-    await userbot.forwardToChannel(parseInt(fromChatId), messageId, chatId);
-  } else {
-    await api.copyMessage(chatId, parseInt(fromChatId), messageId);
+  if (userbot.isLoggedIn() && userbot.isBotRelayReady()) {
+    const ubId = userbot.getUserbotId();
+    if (ubId) {
+      // Bot copies the post to userbot's DM, then userbot forwards to channel
+      const copied = await api.copyMessage(ubId, parseInt(fromChatId), messageId);
+      try {
+        await api.sendMessage(ubId, `relay → ${chatId}`, {
+          reply_parameters: { message_id: copied.message_id },
+        });
+      } catch { /* relay marker is non-critical */ }
+      await userbot.relayViaBot(copied.message_id, chatId);
+      return;
+    }
   }
+  await api.copyMessage(chatId, parseInt(fromChatId), messageId);
 }
 
 /* ═══════════════ Plan Posts ════════════════════════════════ */
