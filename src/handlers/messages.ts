@@ -209,6 +209,25 @@ export async function handleMessage(ctx: BotContext) {
       return;
     }
 
+    /* ── Edit remaining days for broadcast group ───────────── */
+    case "edit_broadcast_days": {
+      if (!state.id) return;
+      if (!msg.text || !/^\d+$/.test(msg.text.trim()) || parseInt(msg.text.trim()) < 0) {
+        await ctx.reply(`${e("⚠️", E.WARNING)} Введите число (≥ 0):`, { parse_mode: "HTML" });
+        return;
+      }
+      const newRemaining = parseInt(msg.text.trim());
+      const group = db.getBroadcastGroup(state.id);
+      if (!group) return;
+      // remaining = total_days - days_sent → total_days = days_sent + newRemaining
+      const newTotalDays = group.days_sent + newRemaining;
+      db.updateBroadcastGroup(state.id, { total_days: newTotalDays });
+      clearAwaiting(userId);
+      await ctx.reply(`${e("✅", E.CONFIRM)} Осталось дней: ${newRemaining}`, { parse_mode: "HTML" });
+      await showBroadcastGroupDetail(ctx, state.id);
+      return;
+    }
+
     /* ── Add post to broadcast group ─────────────────────── */
     case "add_group_post": {
       if (!state.id) return;

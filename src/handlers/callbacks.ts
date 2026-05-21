@@ -215,6 +215,21 @@ export async function handleCallback(ctx: BotContext) {
     return;
   }
 
+  if (data.startsWith("bg:days:")) {
+    const groupId = parseId(data, 2);
+    setAwaiting(ctx.from!.id, { action: "edit_broadcast_days", id: groupId });
+    const group = db.getBroadcastGroup(groupId);
+    if (!group) return;
+    const remaining = group.total_days - group.days_sent;
+    const kb = new InlineKeyboard().text("Отмена", `bg:${groupId}`).icon(E.CANCEL);
+    return ctx.editMessageText(
+      `${e("📊", E.PANEL)} <b>Изменить кол-во оставшихся дней</b>\n\n` +
+        `Сейчас осталось: <b>${remaining}</b>\n` +
+        `Введите новое число:`,
+      { reply_markup: kb, parse_mode: "HTML" },
+    );
+  }
+
   if (data.startsWith("bg:del:")) {
     const groupId = parseId(data, 2);
     const group = db.getBroadcastGroup(groupId);

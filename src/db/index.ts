@@ -311,6 +311,15 @@ export function logBroadcastSend(campaignId: number, groupId: number, postId: nu
   db.query("INSERT INTO broadcast_send_log (campaign_id, group_id, post_id) VALUES (?,?,?)").run(campaignId, groupId, postId);
 }
 
+/** Check if a broadcast group has already been sent today */
+export function wasBroadcastGroupSentToday(groupId: number): boolean {
+  const today = new Date().toISOString().slice(0, 10);
+  const row = db.query(
+    "SELECT 1 FROM broadcast_send_log WHERE group_id = ? AND sent_at >= ? LIMIT 1",
+  ).get(groupId, today + " 00:00:00") as { 1: number } | null;
+  return row !== null;
+}
+
 /** All due broadcast groups across all active campaigns for current time */
 export function getDueBroadcastGroups(currentTime: string, weekday: number): (BroadcastGroup & { channel_chat_ids: string[] })[] {
   // Fetch all active groups that haven't exceeded total_days

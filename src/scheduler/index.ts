@@ -103,6 +103,9 @@ async function processBroadcasts(api: Api) {
   for (const group of dueGroups) {
     if (group.channel_chat_ids.length === 0) continue;
 
+    // Dedup: skip if already sent today (e.g. after restart within same minute)
+    if (db.wasBroadcastGroupSentToday(group.id)) continue;
+
     const post = db.pickRandomGroupPost(group);
     if (!post) {
       console.log(`[scheduler] broadcast group:${group.id} has no posts, skipping`);
