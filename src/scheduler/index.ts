@@ -34,11 +34,12 @@ export function stopScheduler() {
   }
 }
 
-async function sendToChannel(api: Api, chatId: string, fromChatId: string, messageId: number): Promise<void> {
+async function sendToChannel(api: Api, chatId: string, fromChatId: string, messageId: number, replyMarkup?: string | null): Promise<void> {
   if (userbot.isLoggedIn()) {
     await userbot.forwardToChannel(parseInt(fromChatId), messageId, chatId);
   } else {
-    await api.copyMessage(chatId, parseInt(fromChatId), messageId);
+    const opts = replyMarkup ? { reply_markup: JSON.parse(replyMarkup) } : {};
+    await api.copyMessage(chatId, parseInt(fromChatId), messageId, opts);
   }
 }
 
@@ -49,7 +50,7 @@ async function processPlanPosts(api: Api) {
   for (const post of due) {
     for (const chatId of post.channel_chat_ids) {
       try {
-        await sendToChannel(api, chatId, post.chat_id, post.message_id);
+        await sendToChannel(api, chatId, post.chat_id, post.message_id, post.reply_markup);
         console.log(`[scheduler] plan post ${post.id} → ${chatId}`);
       } catch (err) {
         console.error(`[scheduler] failed plan post ${post.id} → ${chatId}:`, err);
@@ -98,7 +99,7 @@ async function processBroadcasts(api: Api) {
 
     for (const chatId of group.channel_chat_ids) {
       try {
-        await sendToChannel(api, chatId, post.chat_id, post.message_id);
+        await sendToChannel(api, chatId, post.chat_id, post.message_id, post.reply_markup);
         console.log(`[scheduler] broadcast cmp:${group.campaign_id} group:${group.id} post:${post.id} → ${chatId}`);
       } catch (err) {
         console.error(`[scheduler] failed broadcast cmp:${group.campaign_id} group:${group.id} → ${chatId}:`, err);

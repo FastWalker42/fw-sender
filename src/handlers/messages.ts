@@ -214,6 +214,7 @@ export async function handleMessage(ctx: BotContext) {
       if (!state.id) return;
       const count = db.countBroadcastGroupPosts(state.id);
       const label = getPostLabel(msg, count);
+      const markup = msg.reply_markup ? JSON.stringify(msg.reply_markup) : null;
 
       try {
         const newPost = db.addBroadcastGroupPost(
@@ -221,6 +222,7 @@ export async function handleMessage(ctx: BotContext) {
           String(ctx.chat!.id),
           msg.message_id,
           label,
+          markup,
         );
         clearAwaiting(userId);
         await ctx.reply(`${e("✅", E.CONFIRM)} Пост «${newPost.label}» добавлен в группу.`, { parse_mode: "HTML" });
@@ -237,10 +239,11 @@ export async function handleMessage(ctx: BotContext) {
       if (!state.id) return;
       const ppCount = db.getUnsentPlanPosts(state.id).length;
       const ppLabel = getPostLabel(msg, ppCount);
+      const ppMarkup = msg.reply_markup ? JSON.stringify(msg.reply_markup) : null;
       setAwaiting(userId, {
         action: "pp_enter_time",
         id: state.id,
-        pending: { chatId: String(ctx.chat!.id), messageId: msg.message_id, label: ppLabel },
+        pending: { chatId: String(ctx.chat!.id), messageId: msg.message_id, label: ppLabel, replyMarkup: ppMarkup },
       });
 
       const ppKb = new InlineKeyboard();
@@ -293,7 +296,7 @@ export async function handleMessage(ctx: BotContext) {
 
       let newPlanPost;
       try {
-        newPlanPost = db.addPlanPost(state.id, state.pending.chatId, state.pending.messageId, state.pending.label);
+        newPlanPost = db.addPlanPost(state.id, state.pending.chatId, state.pending.messageId, state.pending.label, state.pending.replyMarkup);
         db.updatePlanPost(newPlanPost.id, { send_time: ppTime });
       } catch {
         await ctx.reply(`${e("⚠️", E.WARNING)} Этот пост уже добавлен.`, { parse_mode: "HTML" });
