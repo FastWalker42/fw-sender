@@ -13,6 +13,7 @@ import {
   scheduleConversation,
   defaultTimeConversation,
   planDatetimeConversation,
+  broadcastGroupTimeConversation,
 } from "./conversations/date-time";
 
 // Init database
@@ -37,6 +38,7 @@ bot.use(conversations());
 bot.use(createConversation(scheduleConversation));
 bot.use(createConversation(defaultTimeConversation));
 bot.use(createConversation(planDatetimeConversation));
+bot.use(createConversation(broadcastGroupTimeConversation));
 
 // Ignore channel_post updates — the bot must not react to posts in managed channels
 bot.on("channel_post", () => {});
