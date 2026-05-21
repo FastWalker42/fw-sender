@@ -124,10 +124,11 @@ export async function forwardToChannel(
 ): Promise<void> {
   const c = getClient();
   if (!c) throw new Error("Userbot not connected");
+  const numericId = parseInt(toChatId, 10);
   await c.forwardMessagesById({
     fromChatId,
     messages: [messageId],
-    toChatId,
+    toChatId: numericId,
     noAuthor: true,
   });
 }
@@ -136,8 +137,9 @@ export async function checkChannelMembership(chatId: string): Promise<boolean> {
   const c = getClient();
   if (!c) return false;
   try {
-    await c.getChat(chatId);
-    return true;
+    const numericId = parseInt(chatId, 10);
+    const chat = await c.getChat(numericId);
+    return !!chat;
   } catch {
     return false;
   }
