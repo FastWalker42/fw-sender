@@ -6,6 +6,7 @@ export const ADMIN_IDS: number[] = (process.env.ADMIN_IDS || "")
 export const BOT_USERNAME = process.env.BOT_USERNAME || "";
 export const API_ID = parseInt(process.env.API_ID || "0", 10);
 export const API_HASH = process.env.API_HASH || "";
+export const BOT_ID = parseInt(BOT_TOKEN.split(":")[0] || "0", 10);
 
 if (!BOT_TOKEN) {
   console.error("BOT_TOKEN is required. Set it in .env file.");
