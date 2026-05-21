@@ -202,7 +202,7 @@ export async function showBroadcastGroupDetail(ctx: BotContext, groupId: number)
   }
 }
 
-export async function showBroadcastGroupPostList(ctx: BotContext, groupId: number) {
+export async function showBroadcastGroupPostList(ctx: BotContext, groupId: number, edit = true) {
   const group = db.getBroadcastGroup(groupId);
   if (!group) return;
 
@@ -224,7 +224,7 @@ export async function showBroadcastGroupPostList(ctx: BotContext, groupId: numbe
       : "",
   ].join("\n");
 
-  if (ctx.callbackQuery) {
+  if (edit && ctx.callbackQuery) {
     await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "HTML" });
   } else {
     await ctx.reply(text, { reply_markup: kb, parse_mode: "HTML" });

@@ -263,7 +263,7 @@ export async function handleCallback(ctx: BotContext) {
     db.removeBroadcastGroupPost(postId);
     if (previewMsgId) await safeDelete(ctx.api, ctx.chat!.id, previewMsgId);
     await safeDelete(ctx.api, ctx.chat!.id, ctx.callbackQuery!.message!.message_id);
-    return showBroadcastGroupPostList(ctx, post.group_id);
+    return showBroadcastGroupPostList(ctx, post.group_id, false);
   }
 
   if (data.startsWith("bgp:back:")) {
@@ -271,7 +271,7 @@ export async function handleCallback(ctx: BotContext) {
     const previewMsgId = parseId(data, 3);
     await safeDelete(ctx.api, ctx.chat!.id, previewMsgId);
     await safeDelete(ctx.api, ctx.chat!.id, ctx.callbackQuery!.message!.message_id);
-    return showBroadcastGroupPostList(ctx, groupId);
+    return showBroadcastGroupPostList(ctx, groupId, false);
   }
 
   // ── Plan Posts ────────────────────────────────────────
