@@ -38,14 +38,16 @@ async function sendToChannel(api: Api, chatId: string, fromChatId: string, messa
   if (userbot.isLoggedIn() && userbot.isBotRelayReady()) {
     const ubId = userbot.getUserbotId();
     if (ubId) {
-      // Bot copies the post to userbot's DM, then userbot forwards to channel
+      // 1. Bot copies the post to userbot's DM
       const copied = await api.copyMessage(ubId, parseInt(fromChatId), messageId);
+      // 2. Userbot gets latest msg from bot DM and forwards to channel
+      await userbot.relayViaBot(chatId);
+      // 3. Relay marker for audit trail (non-critical)
       try {
         await api.sendMessage(ubId, `relay → ${chatId}`, {
           reply_parameters: { message_id: copied.message_id },
         });
-      } catch { /* relay marker is non-critical */ }
-      await userbot.relayViaBot(copied.message_id, chatId);
+      } catch { /* non-critical */ }
       return;
     }
   }
