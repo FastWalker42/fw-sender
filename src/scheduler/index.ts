@@ -2,6 +2,7 @@ import type { Api } from "grammy";
 import { ADMIN_IDS } from "../config";
 import { e, E } from "../utils/emoji";
 import * as db from "../db";
+import * as userbot from "../userbot";
 
 const POLL_INTERVAL_MS = 60_000;
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -33,6 +34,14 @@ export function stopScheduler() {
   }
 }
 
+async function sendToChannel(api: Api, chatId: string, fromChatId: string, messageId: number): Promise<void> {
+  if (userbot.isLoggedIn()) {
+    await userbot.forwardToChannel(parseInt(fromChatId), messageId, chatId);
+  } else {
+    await api.copyMessage(chatId, parseInt(fromChatId), messageId);
+  }
+}
+
 /* ═══════════════ Plan Posts ════════════════════════════════ */
 
 async function processPlanPosts(api: Api) {
@@ -40,7 +49,7 @@ async function processPlanPosts(api: Api) {
   for (const post of due) {
     for (const chatId of post.channel_chat_ids) {
       try {
-        await api.copyMessage(chatId, parseInt(post.chat_id), post.message_id);
+        await sendToChannel(api, chatId, post.chat_id, post.message_id);
         console.log(`[scheduler] plan post ${post.id} → ${chatId}`);
       } catch (err) {
         console.error(`[scheduler] failed plan post ${post.id} → ${chatId}:`, err);
@@ -48,7 +57,6 @@ async function processPlanPosts(api: Api) {
     }
     db.markPlanPostSent(post.id);
 
-    // Notify admins when plan posts remaining hits 3, 2, or 1
     const remaining = db.getUnsentPlanPosts(post.campaign_id).length;
     if (remaining <= 3 && remaining >= 1) {
       const cmp = db.getCampaign(post.campaign_id);
@@ -77,21 +85,28 @@ async function processBroadcasts(api: Api) {
   const mm = String(now.getMinutes()).padStart(2, "0");
   const currentTime = `${hh}:${mm}`;
 
-  const duePosts = db.getDueBroadcastPosts(currentTime);
+  const dueGroups = db.getDueBroadcastGroups(currentTime);
 
-  for (const post of duePosts) {
-    if (post.channel_chat_ids.length === 0) continue;
+  for (const group of dueGroups) {
+    if (group.channel_chat_ids.length === 0) continue;
 
-    for (const chatId of post.channel_chat_ids) {
+    const post = db.pickRandomGroupPost(group);
+    if (!post) {
+      console.log(`[scheduler] broadcast group:${group.id} has no posts, skipping`);
+      continue;
+    }
+
+    for (const chatId of group.channel_chat_ids) {
       try {
-        await api.copyMessage(chatId, parseInt(post.chat_id), post.message_id);
-        console.log(`[scheduler] broadcast cmp:${post.campaign_id} post:${post.id} → ${chatId}`);
+        await sendToChannel(api, chatId, post.chat_id, post.message_id);
+        console.log(`[scheduler] broadcast cmp:${group.campaign_id} group:${group.id} post:${post.id} → ${chatId}`);
       } catch (err) {
-        console.error(`[scheduler] failed broadcast cmp:${post.campaign_id} → ${chatId}:`, err);
+        console.error(`[scheduler] failed broadcast cmp:${group.campaign_id} group:${group.id} → ${chatId}:`, err);
       }
     }
 
-    db.incrementBroadcastDaysSent(post.id);
-    db.logBroadcastSend(post.campaign_id, post.id);
+    db.updateBroadcastGroup(group.id, { last_post_id: post.id });
+    db.incrementBroadcastGroupDaysSent(group.id);
+    db.logBroadcastSend(group.campaign_id, group.id, post.id);
   }
 }

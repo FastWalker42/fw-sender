@@ -7,8 +7,15 @@ import { e, E } from "../utils/emoji";
 import { getAwaiting, clearAwaiting, setAwaiting } from "./callbacks";
 import { getPostLabel } from "../utils/post-label";
 import { showChannelList } from "../menus/channel-menu";
-import { showCampaignDetail, showBroadcastPostDetail, showPlanPostDetail } from "../menus/campaign-menu";
+import {
+  showCampaignDetail,
+  showBroadcastGroupDetail,
+  showBroadcastGroupPostList,
+  showPlanPostDetail,
+  showUserbotMenu,
+} from "../menus/campaign-menu";
 import * as db from "../db";
+import * as userbot from "../userbot";
 
 export async function handleMessage(ctx: BotContext) {
   if (!isAdmin(ctx)) return;
@@ -111,25 +118,26 @@ export async function handleMessage(ctx: BotContext) {
       return;
     }
 
-    /* ── Add broadcast post (step 1: receive post) ─────── */
-    case "add_broadcast_post": {
-      if (!state.id) return;
-      const bpCount = db.getBroadcastPosts(state.id).length;
-      const label = getPostLabel(msg, bpCount);
+    /* ── Name broadcast group ────────────────────────────── */
+    case "name_broadcast_group": {
+      if (!msg.text || !state.id) {
+        await ctx.reply(`${e("⚠️", E.WARNING)} Отправьте текстовое название.`, { parse_mode: "HTML" });
+        return;
+      }
       setAwaiting(userId, {
-        action: "bp_enter_days",
+        action: "bg_enter_days",
         id: state.id,
-        pending: { chatId: String(ctx.chat!.id), messageId: msg.message_id, label },
+        pending: { chatId: "", messageId: 0, label: msg.text.trim() },
       });
       await ctx.reply(
-        `${e("📨", E.AUTOSPAM)} Пост «${label}» принят.\n\nВведите количество дней для постинга (цифрой):`,
+        `${e("📦", E.PACKAGE)} Группа «${msg.text.trim()}».\n\nВведите количество дней для постинга (цифрой):`,
         { parse_mode: "HTML" },
       );
       return;
     }
 
-    /* ── Add broadcast post (step 2: enter days) ─────── */
-    case "bp_enter_days": {
+    /* ── Broadcast group: enter days ─────────────────────── */
+    case "bg_enter_days": {
       if (!state.id || !state.pending) return;
       if (!msg.text || !/^\d+$/.test(msg.text.trim()) || parseInt(msg.text.trim()) < 1) {
         await ctx.reply(`${e("⚠️", E.WARNING)} Введите число дней (целое число ≥ 1):`, { parse_mode: "HTML" });
@@ -137,7 +145,7 @@ export async function handleMessage(ctx: BotContext) {
       }
       const days = parseInt(msg.text.trim());
       setAwaiting(userId, {
-        action: "bp_enter_time",
+        action: "bg_enter_time",
         id: state.id,
         pending: { ...state.pending, days },
       });
@@ -147,7 +155,7 @@ export async function handleMessage(ctx: BotContext) {
         const tw = tgwidget(BOT_USERNAME).date({ mode: "time" }).style({ liquidGlass: true, adoptTgPalette: true });
         kb.webApp("Выбрать время", tw.url()).icon(E.SCHEDULE).row();
       }
-      kb.text("Отмена", `bp:list:${state.id}`).icon(E.CANCEL).row();
+      kb.text("Отмена", `bg:list:${state.id}`).icon(E.CANCEL).row();
 
       await ctx.reply(
         `${e("🕓", E.SCHEDULE)} <b>Время постинга</b>\n\n` +
@@ -157,13 +165,12 @@ export async function handleMessage(ctx: BotContext) {
       return;
     }
 
-    /* ── Add broadcast post (step 3: enter time) ─────── */
-    case "bp_enter_time": {
+    /* ── Broadcast group: enter time ─────────────────────── */
+    case "bg_enter_time": {
       if (!state.id || !state.pending || !state.pending.days) return;
 
       let time: string | null = null;
 
-      // WebApp data from tgwidget
       if (msg.web_app_data?.data) {
         try {
           const parsed = parseDate(msg.web_app_data.data, { mode: "time" });
@@ -171,7 +178,6 @@ export async function handleMessage(ctx: BotContext) {
         } catch { /* ignore */ }
       }
 
-      // /start payload from tgwidget
       if (!time && msg.text?.startsWith("/start ")) {
         try {
           const parsed = parseDate(msg.text.slice(7), { mode: "time" });
@@ -179,7 +185,6 @@ export async function handleMessage(ctx: BotContext) {
         } catch { /* ignore */ }
       }
 
-      // Manual text input (HH:MM)
       if (!time && msg.text) {
         const m = msg.text.trim().match(/^(\d{1,2}):(\d{2})$/);
         if (m?.[1] && m[2]) {
@@ -192,23 +197,38 @@ export async function handleMessage(ctx: BotContext) {
         return;
       }
 
-      let newPost;
+      const newGroup = db.addBroadcastGroup(
+        state.id,
+        state.pending.label,
+        time,
+        state.pending.days,
+      );
+      clearAwaiting(userId);
+      await ctx.reply(`${e("✅", E.CONFIRM)} Группа «${newGroup.label}» создана.`, { parse_mode: "HTML" });
+      await showBroadcastGroupDetail(ctx, newGroup.id);
+      return;
+    }
+
+    /* ── Add post to broadcast group ─────────────────────── */
+    case "add_group_post": {
+      if (!state.id) return;
+      const count = db.countBroadcastGroupPosts(state.id);
+      const label = getPostLabel(msg, count);
+
       try {
-        newPost = db.addBroadcastPost(
+        const newPost = db.addBroadcastGroupPost(
           state.id,
-          state.pending.chatId,
-          state.pending.messageId,
-          state.pending.label,
-          time,
-          state.pending.days,
+          String(ctx.chat!.id),
+          msg.message_id,
+          label,
         );
+        clearAwaiting(userId);
+        await ctx.reply(`${e("✅", E.CONFIRM)} Пост «${newPost.label}» добавлен в группу.`, { parse_mode: "HTML" });
+        await showBroadcastGroupPostList(ctx, state.id);
       } catch {
         await ctx.reply(`${e("⚠️", E.WARNING)} Этот пост уже добавлен.`, { parse_mode: "HTML" });
         clearAwaiting(userId);
-        return;
       }
-      clearAwaiting(userId);
-      await showBroadcastPostDetail(ctx, newPost.id);
       return;
     }
 
@@ -282,6 +302,98 @@ export async function handleMessage(ctx: BotContext) {
       }
       clearAwaiting(userId);
       await showPlanPostDetail(ctx, newPlanPost.id);
+      return;
+    }
+
+    /* ── Userbot: enter phone ────────────────────────────── */
+    case "ub_phone": {
+      if (!msg.text) {
+        await ctx.reply(`${e("⚠️", E.WARNING)} Введите номер телефона.`, { parse_mode: "HTML" });
+        return;
+      }
+      const phone = msg.text.trim();
+      try {
+        await userbot.sendCode(phone);
+        setAwaiting(userId, { action: "ub_code" });
+        await ctx.reply(
+          `${e("🔓", E.LOCK)} Код отправлен на <b>${phone}</b>.\n\nВведите код из Telegram:`,
+          { parse_mode: "HTML" },
+        );
+      } catch (err: any) {
+        await ctx.reply(`${e("⚠️", E.WARNING)} Ошибка: ${err?.message || err}`, { parse_mode: "HTML" });
+        clearAwaiting(userId);
+      }
+      return;
+    }
+
+    /* ── Userbot: enter code ─────────────────────────────── */
+    case "ub_code": {
+      if (!msg.text) {
+        await ctx.reply(`${e("⚠️", E.WARNING)} Введите код.`, { parse_mode: "HTML" });
+        return;
+      }
+      try {
+        const name = await userbot.signIn(msg.text.trim());
+        clearAwaiting(userId);
+        await ctx.reply(
+          `${e("✅", E.CONFIRM)} Юзербот подключён как <b>${name}</b>`,
+          { parse_mode: "HTML" },
+        );
+        await showUserbotMenu(ctx, false);
+      } catch (err: any) {
+        if (err?.message === "2FA_REQUIRED") {
+          setAwaiting(userId, { action: "ub_password" });
+          await ctx.reply(
+            `${e("🔓", E.LOCK)} Аккаунт защищён 2FA. Введите пароль:`,
+            { parse_mode: "HTML" },
+          );
+        } else {
+          await ctx.reply(`${e("⚠️", E.WARNING)} Ошибка: ${err?.message || err}`, { parse_mode: "HTML" });
+          clearAwaiting(userId);
+        }
+      }
+      return;
+    }
+
+    /* ── Userbot: enter 2FA password ─────────────────────── */
+    case "ub_password": {
+      if (!msg.text) {
+        await ctx.reply(`${e("⚠️", E.WARNING)} Введите пароль.`, { parse_mode: "HTML" });
+        return;
+      }
+      try {
+        const name = await userbot.checkPassword(msg.text.trim());
+        clearAwaiting(userId);
+        await ctx.reply(
+          `${e("✅", E.CONFIRM)} Юзербот подключён как <b>${name}</b>`,
+          { parse_mode: "HTML" },
+        );
+        await showUserbotMenu(ctx, false);
+      } catch (err: any) {
+        await ctx.reply(`${e("⚠️", E.WARNING)} Ошибка: ${err?.message || err}`, { parse_mode: "HTML" });
+        clearAwaiting(userId);
+      }
+      return;
+    }
+
+    /* ── Userbot: import session string ──────────────────── */
+    case "ub_import_session": {
+      if (!msg.text) {
+        await ctx.reply(`${e("⚠️", E.WARNING)} Отправьте строку сессии текстом.`, { parse_mode: "HTML" });
+        return;
+      }
+      try {
+        const name = await userbot.importStringSession(msg.text.trim());
+        clearAwaiting(userId);
+        await ctx.reply(
+          `${e("✅", E.CONFIRM)} Юзербот подключён как <b>${name}</b>`,
+          { parse_mode: "HTML" },
+        );
+        await showUserbotMenu(ctx, false);
+      } catch (err: any) {
+        await ctx.reply(`${e("⚠️", E.WARNING)} Ошибка импорта: ${err?.message || err}`, { parse_mode: "HTML" });
+        clearAwaiting(userId);
+      }
       return;
     }
 

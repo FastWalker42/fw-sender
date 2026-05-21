@@ -2,7 +2,8 @@ import { Database } from "bun:sqlite";
 import type {
   Channel,
   Campaign,
-  BroadcastPost,
+  BroadcastGroup,
+  BroadcastGroupPost,
   PlanPost,
 } from "../types";
 
@@ -46,20 +47,32 @@ export function initDb() {
     )
   `);
 
+  // ── Broadcast groups (replaces broadcast_posts) ─────────
   db.exec(`
-    CREATE TABLE IF NOT EXISTS broadcast_posts (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      campaign_id INTEGER NOT NULL,
-      chat_id     TEXT    NOT NULL,
-      message_id  INTEGER NOT NULL,
-      label       TEXT    NOT NULL DEFAULT 'Пост',
-      position    INTEGER NOT NULL DEFAULT 0,
-      send_time   TEXT    NOT NULL DEFAULT '12:00',
-      total_days  INTEGER NOT NULL DEFAULT 1,
-      days_sent   INTEGER NOT NULL DEFAULT 0,
-      created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE,
-      UNIQUE(chat_id, message_id, campaign_id)
+    CREATE TABLE IF NOT EXISTS broadcast_groups (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      campaign_id  INTEGER NOT NULL,
+      label        TEXT    NOT NULL DEFAULT 'Группа',
+      position     INTEGER NOT NULL DEFAULT 0,
+      send_time    TEXT    NOT NULL DEFAULT '12:00',
+      total_days   INTEGER NOT NULL DEFAULT 1,
+      days_sent    INTEGER NOT NULL DEFAULT 0,
+      last_post_id INTEGER,
+      created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS broadcast_group_posts (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_id   INTEGER NOT NULL,
+      chat_id    TEXT    NOT NULL,
+      message_id INTEGER NOT NULL,
+      label      TEXT    NOT NULL DEFAULT 'Пост',
+      created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (group_id) REFERENCES broadcast_groups(id) ON DELETE CASCADE,
+      UNIQUE(group_id, chat_id, message_id)
     )
   `);
 
@@ -67,10 +80,11 @@ export function initDb() {
     CREATE TABLE IF NOT EXISTS broadcast_send_log (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       campaign_id INTEGER NOT NULL,
+      group_id    INTEGER NOT NULL,
       post_id     INTEGER NOT NULL,
       sent_at     TEXT    NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE,
-      FOREIGN KEY (post_id)     REFERENCES broadcast_posts(id) ON DELETE CASCADE
+      FOREIGN KEY (group_id)    REFERENCES broadcast_groups(id) ON DELETE CASCADE
     )
   `);
 
@@ -91,6 +105,15 @@ export function initDb() {
       UNIQUE(chat_id, message_id, campaign_id)
     )
   `);
+
+  // Migrate: drop old broadcast_posts if it exists (one-time migration)
+  const oldTable = db.query(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='broadcast_posts'",
+  ).get();
+  if (oldTable) {
+    db.exec("DROP TABLE IF EXISTS broadcast_posts");
+    console.log("[db] migrated: dropped old broadcast_posts table");
+  }
 }
 
 /* ═══════════════════════ Channels ══════════════════════════ */
@@ -177,77 +200,113 @@ export function unlinkChannel(campaignId: number, channelId: number) {
   db.query("DELETE FROM campaign_channels WHERE campaign_id = ? AND channel_id = ?").run(campaignId, channelId);
 }
 
-/* ═══════════════ Broadcast Posts (auto-broadcast) ══════════ */
+/* ═══════════════ Broadcast Groups ══════════════════════════ */
 
-export function getBroadcastPosts(campaignId: number): BroadcastPost[] {
-  return db.query("SELECT * FROM broadcast_posts WHERE campaign_id = ? ORDER BY position").all(campaignId) as BroadcastPost[];
+export function getBroadcastGroups(campaignId: number): BroadcastGroup[] {
+  return db.query("SELECT * FROM broadcast_groups WHERE campaign_id = ? ORDER BY position").all(campaignId) as BroadcastGroup[];
 }
 
-export function getBroadcastPost(id: number): BroadcastPost | null {
-  return db.query("SELECT * FROM broadcast_posts WHERE id = ?").get(id) as BroadcastPost | null;
+export function getBroadcastGroup(id: number): BroadcastGroup | null {
+  return db.query("SELECT * FROM broadcast_groups WHERE id = ?").get(id) as BroadcastGroup | null;
 }
 
-export function addBroadcastPost(
+export function addBroadcastGroup(
   campaignId: number,
-  chatId: string,
-  messageId: number,
   label: string,
   sendTime: string,
   totalDays: number,
-): BroadcastPost {
-  const mx = db.query("SELECT COALESCE(MAX(position),-1) as m FROM broadcast_posts WHERE campaign_id = ?").get(campaignId) as { m: number };
+): BroadcastGroup {
+  const mx = db.query("SELECT COALESCE(MAX(position),-1) as m FROM broadcast_groups WHERE campaign_id = ?").get(campaignId) as { m: number };
   const r = db.query(
-    "INSERT INTO broadcast_posts (campaign_id, chat_id, message_id, label, position, send_time, total_days) VALUES (?,?,?,?,?,?,?)",
-  ).run(campaignId, chatId, messageId, label, mx.m + 1, sendTime, totalDays);
-  return getBroadcastPost(Number(r.lastInsertRowid))!;
+    "INSERT INTO broadcast_groups (campaign_id, label, position, send_time, total_days) VALUES (?,?,?,?,?)",
+  ).run(campaignId, label, mx.m + 1, sendTime, totalDays);
+  return getBroadcastGroup(Number(r.lastInsertRowid))!;
 }
 
-export function updateBroadcastPost(
+export function updateBroadcastGroup(
   id: number,
-  f: Partial<Pick<BroadcastPost, "send_time" | "total_days" | "days_sent" | "label" | "position">>,
+  f: Partial<Pick<BroadcastGroup, "send_time" | "total_days" | "days_sent" | "label" | "position" | "last_post_id">>,
 ) {
   const s: string[] = [];
-  const v: (string | number)[] = [];
+  const v: (string | number | null)[] = [];
   if (f.send_time !== undefined) { s.push("send_time = ?"); v.push(f.send_time); }
   if (f.total_days !== undefined) { s.push("total_days = ?"); v.push(f.total_days); }
   if (f.days_sent !== undefined) { s.push("days_sent = ?"); v.push(f.days_sent); }
   if (f.label !== undefined) { s.push("label = ?"); v.push(f.label); }
   if (f.position !== undefined) { s.push("position = ?"); v.push(f.position); }
+  if (f.last_post_id !== undefined) { s.push("last_post_id = ?"); v.push(f.last_post_id); }
   if (s.length === 0) return;
   v.push(id);
-  db.query(`UPDATE broadcast_posts SET ${s.join(", ")} WHERE id = ?`).run(...v);
+  db.query(`UPDATE broadcast_groups SET ${s.join(", ")} WHERE id = ?`).run(...v);
 }
 
-export function incrementBroadcastDaysSent(id: number) {
-  db.query("UPDATE broadcast_posts SET days_sent = days_sent + 1 WHERE id = ?").run(id);
+export function incrementBroadcastGroupDaysSent(id: number) {
+  db.query("UPDATE broadcast_groups SET days_sent = days_sent + 1 WHERE id = ?").run(id);
 }
 
-export function removeBroadcastPost(id: number) {
-  db.query("DELETE FROM broadcast_posts WHERE id = ?").run(id);
+export function removeBroadcastGroup(id: number) {
+  db.query("DELETE FROM broadcast_groups WHERE id = ?").run(id);
+}
+
+/* ═══════════════ Broadcast Group Posts ═════════════════════ */
+
+export function getBroadcastGroupPosts(groupId: number): BroadcastGroupPost[] {
+  return db.query("SELECT * FROM broadcast_group_posts WHERE group_id = ? ORDER BY id").all(groupId) as BroadcastGroupPost[];
+}
+
+export function getBroadcastGroupPost(id: number): BroadcastGroupPost | null {
+  return db.query("SELECT * FROM broadcast_group_posts WHERE id = ?").get(id) as BroadcastGroupPost | null;
+}
+
+export function addBroadcastGroupPost(groupId: number, chatId: string, messageId: number, label: string): BroadcastGroupPost {
+  const r = db.query(
+    "INSERT INTO broadcast_group_posts (group_id, chat_id, message_id, label) VALUES (?,?,?,?)",
+  ).run(groupId, chatId, messageId, label);
+  return getBroadcastGroupPost(Number(r.lastInsertRowid))!;
+}
+
+export function removeBroadcastGroupPost(id: number) {
+  db.query("DELETE FROM broadcast_group_posts WHERE id = ?").run(id);
+}
+
+export function countBroadcastGroupPosts(groupId: number): number {
+  const row = db.query("SELECT COUNT(*) as cnt FROM broadcast_group_posts WHERE group_id = ?").get(groupId) as { cnt: number };
+  return row.cnt;
 }
 
 /* ═══════════ Broadcast Send Log ════════════════════════════ */
 
-export function logBroadcastSend(campaignId: number, postId: number) {
-  db.query("INSERT INTO broadcast_send_log (campaign_id, post_id) VALUES (?,?)").run(campaignId, postId);
+export function logBroadcastSend(campaignId: number, groupId: number, postId: number) {
+  db.query("INSERT INTO broadcast_send_log (campaign_id, group_id, post_id) VALUES (?,?,?)").run(campaignId, groupId, postId);
 }
 
-/** All due broadcast posts across all active campaigns for current time */
-export function getDueBroadcastPosts(currentTime: string): (BroadcastPost & { channel_chat_ids: string[] })[] {
+/** All due broadcast groups across all active campaigns for current time */
+export function getDueBroadcastGroups(currentTime: string): (BroadcastGroup & { channel_chat_ids: string[] })[] {
   const rows = db.query(`
-    SELECT bp.*
-    FROM broadcast_posts bp
-    JOIN campaigns cmp ON cmp.id = bp.campaign_id
+    SELECT bg.*
+    FROM broadcast_groups bg
+    JOIN campaigns cmp ON cmp.id = bg.campaign_id
     WHERE cmp.is_active = 1
-      AND bp.days_sent < bp.total_days
-      AND bp.send_time = ?
-    ORDER BY bp.campaign_id, bp.position
-  `).all(currentTime) as BroadcastPost[];
+      AND bg.days_sent < bg.total_days
+      AND bg.send_time = ?
+    ORDER BY bg.campaign_id, bg.position
+  `).all(currentTime) as BroadcastGroup[];
 
-  return rows.map((bp) => {
-    const channels = getCampaignChannels(bp.campaign_id);
-    return { ...bp, channel_chat_ids: channels.map((c) => c.chat_id) };
+  return rows.map((bg) => {
+    const channels = getCampaignChannels(bg.campaign_id);
+    return { ...bg, channel_chat_ids: channels.map((c) => c.chat_id) };
   });
+}
+
+/** Pick a random post from group, avoiding the last_post_id */
+export function pickRandomGroupPost(group: BroadcastGroup): BroadcastGroupPost | null {
+  const posts = getBroadcastGroupPosts(group.id);
+  if (posts.length === 0) return null;
+  if (posts.length === 1) return posts[0]!;
+
+  const eligible = posts.filter((p) => p.id !== group.last_post_id);
+  if (eligible.length === 0) return posts[0]!;
+  return eligible[Math.floor(Math.random() * eligible.length)]!;
 }
 
 /* ═══════════════════ Plan Posts ═════════════════════════════ */

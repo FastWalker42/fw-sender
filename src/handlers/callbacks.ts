@@ -9,14 +9,18 @@ import {
   showCampaignDetail,
   showCampaignChannels,
   showLinkChannelPicker,
-  showBroadcastPosts,
-  showBroadcastPostDetail,
+  showBroadcastGroups,
+  showBroadcastGroupDetail,
+  showBroadcastGroupPostList,
+  showBroadcastGroupPostPreview,
   showPlanPosts,
   showPlanPostDetail,
   showStretchConfig,
+  showUserbotMenu,
   safeDelete,
 } from "../menus/campaign-menu";
 import * as db from "../db";
+import * as userbot from "../userbot";
 
 /* ═══════════ Awaiting-input state per user ═════════════════ */
 
@@ -105,7 +109,24 @@ export async function handleCallback(ctx: BotContext) {
   if (data.startsWith("cmp:toggle:")) {
     const id = parseId(data, 2);
     const cmp = db.getCampaign(id);
-    if (cmp) db.updateCampaign(id, { is_active: cmp.is_active ? 0 : 1 });
+    if (cmp) {
+      // Check userbot membership when activating
+      if (!cmp.is_active && userbot.isLoggedIn()) {
+        const channels = db.getCampaignChannels(id);
+        const missing: string[] = [];
+        for (const ch of channels) {
+          const isMember = await userbot.checkChannelMembership(ch.chat_id);
+          if (!isMember) missing.push(ch.title || ch.username || ch.chat_id);
+        }
+        if (missing.length > 0) {
+          await ctx.reply(
+            `${e("⚠️", E.WARNING)} <b>Юзербот не состоит в каналах:</b>\n${missing.join("\n")}\n\nДобавьте юзербота в эти каналы для пересылки.`,
+            { parse_mode: "HTML" },
+          );
+        }
+      }
+      db.updateCampaign(id, { is_active: cmp.is_active ? 0 : 1 });
+    }
     return showCampaignDetail(ctx, id);
   }
 
@@ -174,44 +195,83 @@ export async function handleCallback(ctx: BotContext) {
     return showCampaignChannels(ctx, cmpId);
   }
 
-  // ── Broadcast Posts ───────────────────────────────────
-  if (data.startsWith("bp:list:")) return showBroadcastPosts(ctx, parseId(data, 2));
+  // ── Broadcast Groups ──────────────────────────────────
+  if (data.startsWith("bg:list:")) return showBroadcastGroups(ctx, parseId(data, 2));
 
-  if (data.startsWith("bp:add:")) {
+  if (data.startsWith("bg:add:")) {
     const cmpId = parseId(data, 2);
-    setAwaiting(ctx.from!.id, { action: "add_broadcast_post", id: cmpId });
-    const kb = new InlineKeyboard().text("Отмена", `bp:list:${cmpId}`).icon(E.CANCEL);
+    setAwaiting(ctx.from!.id, { action: "name_broadcast_group", id: cmpId });
+    const kb = new InlineKeyboard().text("Отмена", `bg:list:${cmpId}`).icon(E.CANCEL);
     return ctx.editMessageText(
-      `${e("📨", E.AUTOSPAM)} Отправьте пост для автоспама:`,
+      `${e("📦", E.PACKAGE)} Введите название группы постов:`,
       { reply_markup: kb, parse_mode: "HTML" },
     );
   }
 
-  if (data.startsWith("bp:back:")) {
-    const cmpId = parseId(data, 2);
+  if (data.startsWith("bg:del:")) {
+    const groupId = parseId(data, 2);
+    const group = db.getBroadcastGroup(groupId);
+    if (!group) return;
+    const kb = new InlineKeyboard()
+      .text("Да", `bg:confirmdel:${groupId}`).icon(E.CONFIRM)
+      .text("Нет", `bg:${groupId}`).icon(E.CANCEL);
+    return ctx.editMessageText(
+      `Удалить группу <b>${group.label}</b> со всеми постами?`,
+      { reply_markup: kb, parse_mode: "HTML" },
+    );
+  }
+
+  if (data.startsWith("bg:confirmdel:")) {
+    const groupId = parseId(data, 2);
+    const group = db.getBroadcastGroup(groupId);
+    if (!group) return;
+    db.removeBroadcastGroup(groupId);
+    return showBroadcastGroups(ctx, group.campaign_id);
+  }
+
+  if (data.startsWith("bg:")) {
+    const id = parseId(data, 1);
+    if (!isNaN(id)) return showBroadcastGroupDetail(ctx, id);
+  }
+
+  // ── Broadcast Group Posts ─────────────────────────────
+  if (data.startsWith("bgp:list:")) return showBroadcastGroupPostList(ctx, parseId(data, 2));
+
+  if (data.startsWith("bgp:add:")) {
+    const groupId = parseId(data, 2);
+    setAwaiting(ctx.from!.id, { action: "add_group_post", id: groupId });
+    const kb = new InlineKeyboard().text("Отмена", `bgp:list:${groupId}`).icon(E.CANCEL);
+    return ctx.editMessageText(
+      `${e("📨", E.AUTOSPAM)} Отправьте пост для группы:`,
+      { reply_markup: kb, parse_mode: "HTML" },
+    );
+  }
+
+  if (data.startsWith("bgp:view:")) {
+    const postId = parseId(data, 2);
+    if (ctx.callbackQuery?.message) {
+      await safeDelete(ctx.api, ctx.chat!.id, ctx.callbackQuery.message.message_id);
+    }
+    return showBroadcastGroupPostPreview(ctx, postId);
+  }
+
+  if (data.startsWith("bgp:del:")) {
+    const postId = parseId(data, 2);
+    const previewMsgId = parseId(data, 3);
+    const post = db.getBroadcastGroupPost(postId);
+    if (!post) return;
+    db.removeBroadcastGroupPost(postId);
+    if (previewMsgId) await safeDelete(ctx.api, ctx.chat!.id, previewMsgId);
+    await safeDelete(ctx.api, ctx.chat!.id, ctx.callbackQuery!.message!.message_id);
+    return showBroadcastGroupPostList(ctx, post.group_id);
+  }
+
+  if (data.startsWith("bgp:back:")) {
+    const groupId = parseId(data, 2);
     const previewMsgId = parseId(data, 3);
     await safeDelete(ctx.api, ctx.chat!.id, previewMsgId);
     await safeDelete(ctx.api, ctx.chat!.id, ctx.callbackQuery!.message!.message_id);
-    return showBroadcastPosts(ctx, cmpId, false);
-  }
-
-  if (data.startsWith("bp:del:")) {
-    const postId = parseId(data, 2);
-    const previewMsgId = parseId(data, 3);
-    const post = db.getBroadcastPost(postId);
-    if (!post) return;
-    db.removeBroadcastPost(post.id);
-    if (previewMsgId) await safeDelete(ctx.api, ctx.chat!.id, previewMsgId);
-    await safeDelete(ctx.api, ctx.chat!.id, ctx.callbackQuery!.message!.message_id);
-    return showBroadcastPosts(ctx, post.campaign_id, false);
-  }
-
-  if (data.startsWith("bp:")) {
-    const id = parseId(data, 1);
-    if (!isNaN(id)) {
-      await safeDelete(ctx.api, ctx.chat!.id, ctx.callbackQuery!.message!.message_id);
-      return showBroadcastPostDetail(ctx, id);
-    }
+    return showBroadcastGroupPostList(ctx, groupId);
   }
 
   // ── Plan Posts ────────────────────────────────────────
@@ -238,7 +298,6 @@ export async function handleCallback(ctx: BotContext) {
       const cmp = db.getCampaign(post.campaign_id);
       db.updatePlanPost(id, { is_auto_time: 1, send_time: cmp?.default_time || "12:00" });
     }
-    // Clean up old preview + menu, show fresh detail
     if (previewMsgId) await safeDelete(ctx.api, ctx.chat!.id, previewMsgId);
     await safeDelete(ctx.api, ctx.chat!.id, ctx.callbackQuery!.message!.message_id);
     return showPlanPostDetail(ctx, id);
@@ -274,7 +333,6 @@ export async function handleCallback(ctx: BotContext) {
   if (data.startsWith("pp:datetime:")) {
     const id = parseId(data, 2);
     const previewMsgId = parseId(data, 3);
-    // Clean up preview before entering conversation
     if (previewMsgId) await safeDelete(ctx.api, ctx.chat!.id, previewMsgId);
     ctx.session.convPayload = String(id);
     await ctx.conversation.enter("planDatetimeConversation");
@@ -287,6 +345,46 @@ export async function handleCallback(ctx: BotContext) {
       await safeDelete(ctx.api, ctx.chat!.id, ctx.callbackQuery!.message!.message_id);
       return showPlanPostDetail(ctx, id);
     }
+  }
+
+  // ── Userbot ───────────────────────────────────────────
+  if (data === "ub:menu") return showUserbotMenu(ctx);
+
+  if (data === "ub:login") {
+    setAwaiting(ctx.from!.id, { action: "ub_phone" });
+    const kb = new InlineKeyboard().text("Отмена", "ub:menu").icon(E.CANCEL);
+    return ctx.editMessageText(
+      `${e("🔓", E.LOCK)} <b>Вход в юзербот</b>\n\nВведите номер телефона (с кодом страны, например +7...):`,
+      { reply_markup: kb, parse_mode: "HTML" },
+    );
+  }
+
+  if (data === "ub:import") {
+    setAwaiting(ctx.from!.id, { action: "ub_import_session" });
+    const kb = new InlineKeyboard().text("Отмена", "ub:menu").icon(E.CANCEL);
+    return ctx.editMessageText(
+      `${e("📁", E.FILE)} <b>Импорт сессии</b>\n\nОтправьте строку сессии (mtcute string session):`,
+      { reply_markup: kb, parse_mode: "HTML" },
+    );
+  }
+
+  if (data === "ub:logout") {
+    const kb = new InlineKeyboard()
+      .text("Да, отвязать", "ub:confirmlogout").icon(E.CONFIRM)
+      .text("Отмена", "ub:menu").icon(E.CANCEL);
+    return ctx.editMessageText(
+      `${e("⚠️", E.WARNING)} Отвязать сессию юзербота? Потребуется повторная авторизация.`,
+      { reply_markup: kb, parse_mode: "HTML" },
+    );
+  }
+
+  if (data === "ub:confirmlogout") {
+    await userbot.logout();
+    await ctx.editMessageText(
+      `${e("✅", E.CONFIRM)} Сессия юзербота отвязана.`,
+      { parse_mode: "HTML" },
+    );
+    return showUserbotMenu(ctx, false);
   }
 }
 
