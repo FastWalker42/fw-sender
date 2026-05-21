@@ -5,6 +5,7 @@ let client: TelegramClient | null = null;
 let loggedIn = false;
 let userbotId: number | null = null;
 let botRelayReady = false;
+let resolvedBotUsername = "";
 
 /** Pending sign-in state (phone code hash) */
 let pendingSignIn: { phone: string; phoneCodeHash: string } | null = null;
@@ -67,13 +68,21 @@ export function isBotRelayReady(): boolean {
   return botRelayReady;
 }
 
+export function setBotInfo(username: string) {
+  resolvedBotUsername = username;
+  if (loggedIn && !botRelayReady) {
+    initBotRelay().catch((err) => console.error("[userbot] initBotRelay error:", err));
+  }
+}
+
 async function initBotRelay(): Promise<void> {
-  if (!client || !loggedIn || !BOT_USERNAME) {
-    console.log("[userbot] relay disabled: missing BOT_USERNAME or not logged in");
+  const username = resolvedBotUsername || BOT_USERNAME;
+  if (!client || !loggedIn || !username) {
+    console.log("[userbot] relay disabled: missing bot username or not logged in");
     return;
   }
   try {
-    await client.resolvePeer("@" + BOT_USERNAME);
+    await client.resolvePeer("@" + username);
     await client.sendText(BOT_ID, ".");
     botRelayReady = true;
     console.log("[userbot] bot relay initialized");
@@ -171,16 +180,20 @@ export async function forwardToChannel(
 }
 
 export async function relayViaBot(
-  botMsgId: number,
   toChatId: string,
 ): Promise<void> {
   const c = getClient();
   if (!c) throw new Error("Userbot not connected");
   if (!botRelayReady) throw new Error("Bot relay not initialized");
+
+  const history = await c.getHistory(BOT_ID, { limit: 1 });
+  const latest = history[0];
+  if (!latest) throw new Error("No messages from bot to relay");
+
   const numericId = parseInt(toChatId, 10);
   await c.forwardMessagesById({
     fromChatId: BOT_ID,
-    messages: [botMsgId],
+    messages: [latest.id],
     toChatId: numericId,
     noAuthor: true,
   });

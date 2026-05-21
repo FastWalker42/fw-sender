@@ -8,7 +8,7 @@ import { handleCallback } from "./handlers/callbacks";
 import { handleMessage } from "./handlers/messages";
 import { adminOnly } from "./utils/admin";
 import { startScheduler, stopScheduler } from "./scheduler";
-import { initUserbot } from "./userbot";
+import { initUserbot, setBotInfo } from "./userbot";
 import {
   scheduleConversation,
   defaultTimeConversation,
@@ -63,6 +63,7 @@ bot.catch((err) => {
 bot.start({
   onStart: (info) => {
     console.log(`[bot] @${info.username} started`);
+    if (info.username) setBotInfo(info.username);
     startScheduler(bot.api);
   },
 });
