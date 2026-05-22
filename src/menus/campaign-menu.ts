@@ -52,11 +52,14 @@ export async function showCampaignDetail(ctx: BotContext, id: number, edit = tru
     ? channels.map((c) => c.title || c.username || c.chat_id).join(", ")
     : "—";
 
+  const jitterText = cmp.jitter > 0 ? `±${cmp.jitter} мин.` : "выкл.";
+
   const text = [
     `${e("🔗", E.CAMPAIGN)} <b>${cmp.name}</b>`,
     "",
     `${status}`,
     `${e("🕓", E.SCHEDULE)} Дефолт-время плана: ${cmp.default_time}`,
+    `${e("🎯", E.STAR)} Разброс: ${jitterText}`,
     `${e("📢", E.CHANNELS)} Каналы: ${chNames}`,
     `${e("📨", E.AUTOSPAM)} Автоспам: ${groups.length} групп`,
     `${e("📥", E.PLAN)} План постов: ${pPosts.length} в очереди`,
@@ -70,6 +73,7 @@ export async function showCampaignDetail(ctx: BotContext, id: number, edit = tru
     .text(`Каналы (${channels.length})`, `cmpch:list:${id}`).icon(E.CHANNELS)
     .row()
     .text("Дефолт-время", `cmp:deftime:${id}`).icon(E.SCHEDULE)
+    .text(`Разброс: ${jitterText}`, `cmp:jitter:${id}`).icon(E.STAR)
     .row();
 
   if (cmp.is_active) {
