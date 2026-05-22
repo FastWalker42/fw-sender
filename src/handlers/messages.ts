@@ -118,6 +118,24 @@ export async function handleMessage(ctx: BotContext) {
       return;
     }
 
+    /* ── Edit campaign jitter ──────────────────────────────── */
+    case "edit_jitter": {
+      if (!state.id) return;
+      if (!msg.text || !/^\d+$/.test(msg.text.trim())) {
+        await ctx.reply(`${e("⚠️", E.WARNING)} Введите число минут (≥ 0):`, { parse_mode: "HTML" });
+        return;
+      }
+      const jitter = parseInt(msg.text.trim());
+      db.updateCampaign(state.id, { jitter });
+      clearAwaiting(userId);
+      await ctx.reply(
+        `${e("✅", E.CONFIRM)} Разброс: ${jitter > 0 ? `±${jitter} мин.` : "выключен"}`,
+        { parse_mode: "HTML" },
+      );
+      await showCampaignDetail(ctx, state.id, false);
+      return;
+    }
+
     /* ── Name broadcast group ────────────────────────────── */
     case "name_broadcast_group": {
       if (!msg.text || !state.id) {

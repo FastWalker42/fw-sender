@@ -6,6 +6,7 @@ import type {
   BroadcastGroupPost,
   PlanPost,
 } from "../types";
+import { getJitterOffset, addMinutesToTime } from "../utils/jitter";
 
 const db = new Database("fw-sender.db", { create: true });
 db.exec("PRAGMA journal_mode = WAL");
@@ -31,6 +32,7 @@ export function initDb() {
       schedule_type  TEXT    NOT NULL DEFAULT 'simple',
       schedule_value TEXT    NOT NULL DEFAULT '12:00',
       default_time   TEXT    NOT NULL DEFAULT '12:00',
+      jitter         INTEGER NOT NULL DEFAULT 0,
       is_active      INTEGER NOT NULL DEFAULT 0,
       created_at     TEXT    NOT NULL DEFAULT (datetime('now'))
     )
@@ -125,6 +127,13 @@ export function initDb() {
     console.log("[db] migrated: added schedule_type/schedule_value to broadcast_groups");
   }
 
+  // Migrate: add jitter column to campaigns if missing
+  const cmpCols = db.query("PRAGMA table_info(campaigns)").all() as { name: string }[];
+  if (cmpCols.length > 0 && !cmpCols.some((c) => c.name === "jitter")) {
+    db.exec("ALTER TABLE campaigns ADD COLUMN jitter INTEGER NOT NULL DEFAULT 0");
+    console.log("[db] migrated: added jitter to campaigns");
+  }
+
   // Migrate: recreate broadcast_send_log if it has old schema (no group_id column)
   const logCols = db.query("PRAGMA table_info(broadcast_send_log)").all() as { name: string }[];
   const hasGroupId = logCols.some((c) => c.name === "group_id");
@@ -185,7 +194,7 @@ export function addCampaign(name: string): Campaign {
 
 export function updateCampaign(
   id: number,
-  f: Partial<Pick<Campaign, "name" | "schedule_type" | "schedule_value" | "default_time" | "is_active">>,
+  f: Partial<Pick<Campaign, "name" | "schedule_type" | "schedule_value" | "default_time" | "jitter" | "is_active">>,
 ) {
   const s: string[] = [];
   const v: (string | number)[] = [];
@@ -193,6 +202,7 @@ export function updateCampaign(
   if (f.schedule_type !== undefined) { s.push("schedule_type = ?"); v.push(f.schedule_type); }
   if (f.schedule_value !== undefined) { s.push("schedule_value = ?"); v.push(f.schedule_value); }
   if (f.default_time !== undefined) { s.push("default_time = ?"); v.push(f.default_time); }
+  if (f.jitter !== undefined) { s.push("jitter = ?"); v.push(f.jitter); }
   if (f.is_active !== undefined) { s.push("is_active = ?"); v.push(f.is_active); }
   if (s.length === 0) return;
   v.push(id);
@@ -322,23 +332,31 @@ export function wasBroadcastGroupSentToday(groupId: number): boolean {
 
 /** All due broadcast groups across all active campaigns for current time */
 export function getDueBroadcastGroups(currentTime: string, weekday: number): (BroadcastGroup & { channel_chat_ids: string[] })[] {
-  // Fetch all active groups that haven't exceeded total_days
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Fetch all active groups with campaign jitter
   const rows = db.query(`
-    SELECT bg.*
+    SELECT bg.*, cmp.jitter AS cmp_jitter
     FROM broadcast_groups bg
     JOIN campaigns cmp ON cmp.id = bg.campaign_id
     WHERE cmp.is_active = 1
       AND bg.days_sent < bg.total_days
     ORDER BY bg.campaign_id, bg.position
-  `).all() as BroadcastGroup[];
+  `).all() as (BroadcastGroup & { cmp_jitter: number })[];
 
-  // Filter by schedule
+  // Filter by schedule (applying deterministic jitter)
   const due = rows.filter((bg) => {
+    let scheduledTime: string | null;
     if (bg.schedule_type === "detailed" && bg.schedule_value) {
-      const dayTime = getScheduleTimeForDay(bg.schedule_value, weekday);
-      return dayTime === currentTime;
+      scheduledTime = getScheduleTimeForDay(bg.schedule_value, weekday);
+    } else {
+      scheduledTime = bg.send_time;
     }
-    return bg.send_time === currentTime;
+    if (!scheduledTime) return false;
+
+    const offset = getJitterOffset(bg.id, today, bg.cmp_jitter || 0);
+    const jitteredTime = addMinutesToTime(scheduledTime, offset);
+    return jitteredTime === currentTime;
   });
 
   return due.map((bg) => {
@@ -430,18 +448,28 @@ export function getAllDuePlanPosts(): (PlanPost & { channel_chat_ids: string[] }
   const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 
   const rows = db.query(`
-    SELECT pp.*
+    SELECT pp.*, cmp.jitter AS cmp_jitter
     FROM plan_posts pp
     JOIN campaigns cmp ON cmp.id = pp.campaign_id
     WHERE pp.is_sent = 0
       AND cmp.is_active = 1
       AND pp.send_date IS NOT NULL
       AND pp.send_time IS NOT NULL
-      AND (pp.send_date < ? OR (pp.send_date = ? AND pp.send_time <= ?))
     ORDER BY pp.send_date, pp.send_time
-  `).all(date, date, time) as PlanPost[];
+  `).all() as (PlanPost & { cmp_jitter: number })[];
 
-  return rows.map((pp) => {
+  // Filter: apply deterministic jitter to each post's send_time
+  const due = rows.filter((pp) => {
+    if (!pp.send_date || !pp.send_time) return false;
+    const offset = getJitterOffset(pp.id, pp.send_date, pp.cmp_jitter || 0);
+    const jitteredTime = addMinutesToTime(pp.send_time, offset);
+    // Due if date is in the past, or today and jittered time has arrived
+    if (pp.send_date < date) return true;
+    if (pp.send_date === date && jitteredTime <= time) return true;
+    return false;
+  });
+
+  return due.map((pp) => {
     const channels = getCampaignChannels(pp.campaign_id);
     return { ...pp, channel_chat_ids: channels.map((c) => c.chat_id) };
   });

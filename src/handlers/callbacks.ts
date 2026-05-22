@@ -172,6 +172,21 @@ export async function handleCallback(ctx: BotContext) {
     return;
   }
 
+  if (data.startsWith("cmp:jitter:")) {
+    const id = parseId(data, 2);
+    const cmp = db.getCampaign(id);
+    if (!cmp) return;
+    setAwaiting(ctx.from!.id, { action: "edit_jitter", id });
+    const kb = new InlineKeyboard().text("Отмена", `cmp:${id}`).icon(E.CANCEL);
+    return ctx.editMessageText(
+      `${e("⭐️", E.STAR)} <b>Разброс (jitter)</b>\n\n` +
+        `Текущее значение: <b>${cmp.jitter > 0 ? `±${cmp.jitter} мин.` : "выкл."}</b>\n\n` +
+        `Введите кол-во минут разброса (0 = выкл.):\n` +
+        `<i>Например: 2 — отправка будет ±2 мин. от заданного времени</i>`,
+      { reply_markup: kb, parse_mode: "HTML" },
+    );
+  }
+
   if (data.startsWith("cmp:")) {
     const id = parseId(data, 1);
     if (!isNaN(id)) return showCampaignDetail(ctx, id);

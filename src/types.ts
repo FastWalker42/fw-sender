@@ -18,6 +18,8 @@ export interface Campaign {
   schedule_value: string;
   /** Default time for plan posts when AUTO is pressed (HH:MM) */
   default_time: string;
+  /** Random send-time offset in minutes (±jitter). 0 = exact time. */
+  jitter: number;
   is_active: number;
   created_at: string;
 }
