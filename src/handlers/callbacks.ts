@@ -84,6 +84,15 @@ export async function handleCallback(ctx: BotContext) {
     return showDeleteChannelConfirm(ctx, parseId(data, 2));
   }
 
+  if (data.startsWith("ch:approve:")) {
+    const id = parseId(data, 2);
+    const channel = db.getChannel(id);
+    if (channel) {
+      db.updateChannel(id, { auto_approve: channel.auto_approve ? 0 : 1 });
+    }
+    return showChannelDetail(ctx, id);
+  }
+
   if (data.startsWith("ch:confirmdel:")) {
     db.removeChannel(parseId(data, 2));
     return showChannelList(ctx);

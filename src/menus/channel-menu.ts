@@ -31,16 +31,20 @@ export async function showChannelDetail(ctx: BotContext, channelId: number, edit
   }
 
   const label = channel.title || channel.username || channel.chat_id;
+  const approveStatus = channel.auto_approve ? "ВКЛ ✓" : "ВЫКЛ";
 
   const text = [
     `${e("📢", E.CHANNELS)} <b>${label}</b>`,
     `ID: <code>${channel.chat_id}</code>`,
     channel.username ? `Username: @${channel.username}` : "",
+    `Автоприём заявок: ${channel.auto_approve ? `${e("✅", E.ACTIVE)} Вкл` : `${e("🚫", E.STOPPED)} Выкл`}`,
   ]
     .filter(Boolean)
     .join("\n");
 
   const kb = new InlineKeyboard()
+    .text(`АВТОПРИЁМ ЗАЯВОК: ${approveStatus}`, `ch:approve:${channelId}`).icon(E.ROBOT)
+    .row()
     .text("Удалить канал", `ch:del:${channelId}`).icon(E.DELETE)
     .row()
     .text("Назад", "channels:list").icon(E.BACK)

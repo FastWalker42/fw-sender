@@ -134,6 +134,13 @@ export function initDb() {
     console.log("[db] migrated: added jitter to campaigns");
   }
 
+  // Migrate: add auto_approve column to channels if missing
+  const chCols = db.query("PRAGMA table_info(channels)").all() as { name: string }[];
+  if (chCols.length > 0 && !chCols.some((c) => c.name === "auto_approve")) {
+    db.exec("ALTER TABLE channels ADD COLUMN auto_approve INTEGER NOT NULL DEFAULT 0");
+    console.log("[db] migrated: added auto_approve to channels");
+  }
+
   // Migrate: recreate broadcast_send_log if it has old schema (no group_id column)
   const logCols = db.query("PRAGMA table_info(broadcast_send_log)").all() as { name: string }[];
   const hasGroupId = logCols.some((c) => c.name === "group_id");
@@ -175,6 +182,19 @@ export function addChannel(chatId: string, title: string, username: string | nul
 
 export function removeChannel(id: number) {
   db.query("DELETE FROM channels WHERE id = ?").run(id);
+}
+
+export function updateChannel(id: number, f: Partial<Pick<Channel, "auto_approve">>) {
+  const s: string[] = [];
+  const v: (string | number)[] = [];
+  if (f.auto_approve !== undefined) { s.push("auto_approve = ?"); v.push(f.auto_approve); }
+  if (s.length === 0) return;
+  v.push(id);
+  db.query(`UPDATE channels SET ${s.join(", ")} WHERE id = ?`).run(...v);
+}
+
+export function getAutoApproveChannels(): Channel[] {
+  return db.query("SELECT * FROM channels WHERE auto_approve = 1").all() as Channel[];
 }
 
 /* ═══════════════════════ Campaigns ═════════════════════════ */

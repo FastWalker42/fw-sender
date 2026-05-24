@@ -1,8 +1,9 @@
 import { Bot, session } from "grammy";
 import { conversations, createConversation } from "@grammyjs/conversations";
 import type { BotContext, SessionData } from "./types";
-import { BOT_TOKEN } from "./config";
+import { BOT_TOKEN, ADMIN_IDS } from "./config";
 import { initDb } from "./db";
+import * as db from "./db";
 import { handleStart } from "./handlers/start";
 import { handleCallback } from "./handlers/callbacks";
 import { handleMessage } from "./handlers/messages";
@@ -43,6 +44,20 @@ bot.use(createConversation(broadcastGroupTimeConversation));
 // Ignore channel_post updates — the bot must not react to posts in managed channels
 bot.on("channel_post", () => {});
 
+// Auto-approve join requests for channels with auto_approve enabled
+bot.on("chat_join_request", async (ctx) => {
+  const chatId = String(ctx.chatJoinRequest.chat.id);
+  const channel = db.getChannelByChatId(chatId);
+  if (channel?.auto_approve) {
+    try {
+      await ctx.approveChatJoinRequest(ctx.chatJoinRequest.from.id);
+      console.log(`[auto-approve] approved ${ctx.chatJoinRequest.from.id} for channel ${chatId}`);
+    } catch (err) {
+      console.error(`[auto-approve] failed for ${ctx.chatJoinRequest.from.id} in ${chatId}:`, err);
+    }
+  }
+});
+
 // Admin guard for all remaining handlers
 bot.use(adminOnly);
 
@@ -63,6 +78,7 @@ bot.catch((err) => {
 
 // Start
 bot.start({
+  allowed_updates: ["message", "callback_query", "channel_post", "chat_join_request"],
   onStart: (info) => {
     console.log(`[bot] @${info.username} started`);
     if (info.username) setBotInfo(info.username);

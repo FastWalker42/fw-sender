@@ -6,6 +6,7 @@ export interface Channel {
   chat_id: string;
   title: string;
   username: string | null;
+  auto_approve: number;
   added_at: string;
 }
 
