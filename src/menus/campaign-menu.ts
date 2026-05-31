@@ -11,6 +11,24 @@ export async function safeDelete(api: Api, chatId: number | string, msgId: numbe
   try { await api.deleteMessage(chatId, msgId); } catch { /* already deleted */ }
 }
 
+/** Encode an array of preview message IDs into a dash-separated string for callback data */
+export function encodePreviewIds(ids: number[]): string {
+  return ids.join("-");
+}
+
+/** Decode a dash-separated string of preview message IDs from callback data */
+export function decodePreviewIds(raw: string): number[] {
+  if (!raw) return [];
+  return raw.split("-").map(Number).filter((n) => !isNaN(n));
+}
+
+/** Delete multiple preview messages, silently ignoring errors */
+export async function safeDeleteMultiple(api: Api, chatId: number | string, msgIds: number[]) {
+  for (const id of msgIds) {
+    await safeDelete(api, chatId, id);
+  }
+}
+
 /* ═══════════════════ Campaign List ═════════════════════════ */
 
 export async function showCampaignList(ctx: BotContext, edit = true) {
@@ -251,31 +269,34 @@ export async function showBroadcastGroupPostPreview(ctx: BotContext, postId: num
   const chatId = ctx.chat!.id;
   const messageIds = db.parseMessageIds(post);
 
-  let previewMsgId: number;
+  let previewMsgIds: number[];
+  let lastPreviewMsgId: number;
   try {
     if (messageIds.length === 1) {
       const sent = await ctx.api.copyMessage(chatId, parseInt(post.chat_id), messageIds[0]!);
-      previewMsgId = sent.message_id;
+      previewMsgIds = [sent.message_id];
     } else {
       const sent = await ctx.api.copyMessages(chatId, parseInt(post.chat_id), messageIds);
-      // copyMessages returns an array; use the last message_id for the reply
-      previewMsgId = sent[sent.length - 1]!.message_id;
+      previewMsgIds = sent.map((m) => m.message_id);
     }
+    lastPreviewMsgId = previewMsgIds[previewMsgIds.length - 1]!;
   } catch {
     await ctx.reply(`${e("⚠️", E.WARNING)} Не удалось загрузить пост.`, { parse_mode: "HTML" });
     return;
   }
 
+  const encIds = encodePreviewIds(previewMsgIds);
+
   const kb = new InlineKeyboard()
-    .text("Удалить пост", `bgp:del:${postId}:${previewMsgId}`).icon(E.DELETE)
+    .text("Удалить пост", `bgp:del:${postId}:${encIds}`).icon(E.DELETE)
     .row()
-    .text("Назад", `bgp:back:${post.group_id}:${previewMsgId}`).icon(E.BACK)
+    .text("Назад", `bgp:back:${post.group_id}:${encIds}`).icon(E.BACK)
     .row();
 
   await ctx.api.sendMessage(
     chatId,
     `${e("📁", E.FILE)} <b>${post.label}</b>`,
-    { reply_markup: kb, parse_mode: "HTML", reply_parameters: { message_id: previewMsgId } },
+    { reply_markup: kb, parse_mode: "HTML", reply_parameters: { message_id: lastPreviewMsgId } },
   );
 }
 
@@ -329,19 +350,23 @@ export async function showPlanPostDetail(ctx: BotContext, postId: number) {
   const messageIds = db.parseMessageIds(post);
 
   // Send preview (the actual post content)
-  let previewMsgId: number;
+  let previewMsgIds: number[];
+  let lastPreviewMsgId: number;
   try {
     if (messageIds.length === 1) {
       const sent = await ctx.api.copyMessage(chatId, parseInt(post.chat_id), messageIds[0]!);
-      previewMsgId = sent.message_id;
+      previewMsgIds = [sent.message_id];
     } else {
       const sent = await ctx.api.copyMessages(chatId, parseInt(post.chat_id), messageIds);
-      previewMsgId = sent[sent.length - 1]!.message_id;
+      previewMsgIds = sent.map((m) => m.message_id);
     }
+    lastPreviewMsgId = previewMsgIds[previewMsgIds.length - 1]!;
   } catch {
     await ctx.reply(`${e("⚠️", E.WARNING)} Не удалось загрузить пост.`, { parse_mode: "HTML" });
     return;
   }
+
+  const encIds = encodePreviewIds(previewMsgIds);
 
   const text = [
     `${e("📁", E.FILE)} <b>${post.label}</b>`,
@@ -352,17 +377,17 @@ export async function showPlanPostDetail(ctx: BotContext, postId: number) {
   ].join("\n");
 
   const kb = new InlineKeyboard()
-    .text("Дата и время", `pp:datetime:${postId}:${previewMsgId}`).icon(E.SCHEDULE)
+    .text("Дата и время", `pp:datetime:${postId}:${encIds}`).icon(E.SCHEDULE)
     .row()
-    .text(post.is_auto_time ? "АВТО ✓" : "АВТО", `pp:auto:${postId}:${previewMsgId}`).icon(E.ROBOT)
+    .text(post.is_auto_time ? "АВТО ✓" : "АВТО", `pp:auto:${postId}:${encIds}`).icon(E.ROBOT)
     .row();
-  kb.text("Удалить", `pp:del:${postId}:${previewMsgId}`).icon(E.DELETE).row();
-  kb.text("Назад", `pp:back:${post.campaign_id}:${previewMsgId}`).icon(E.BACK).row();
+  kb.text("Удалить", `pp:del:${postId}:${encIds}`).icon(E.DELETE).row();
+  kb.text("Назад", `pp:back:${post.campaign_id}:${encIds}`).icon(E.BACK).row();
 
   await ctx.api.sendMessage(
     chatId,
     text,
-    { reply_markup: kb, parse_mode: "HTML", reply_parameters: { message_id: previewMsgId } },
+    { reply_markup: kb, parse_mode: "HTML", reply_parameters: { message_id: lastPreviewMsgId } },
   );
 }
 

@@ -18,6 +18,8 @@ import {
   showStretchConfig,
   showUserbotMenu,
   safeDelete,
+  safeDeleteMultiple,
+  decodePreviewIds,
 } from "../menus/campaign-menu";
 import * as db from "../db";
 import * as userbot from "../userbot";
@@ -305,19 +307,19 @@ export async function handleCallback(ctx: BotContext) {
 
   if (data.startsWith("bgp:del:")) {
     const postId = parseId(data, 2);
-    const previewMsgId = parseId(data, 3);
+    const previewIds = decodePreviewIds(parsePreviewIdsRaw(data));
     const post = db.getBroadcastGroupPost(postId);
     if (!post) return;
     db.removeBroadcastGroupPost(postId);
-    if (previewMsgId) await safeDelete(ctx.api, ctx.chat!.id, previewMsgId);
+    await safeDeleteMultiple(ctx.api, ctx.chat!.id, previewIds);
     await safeDelete(ctx.api, ctx.chat!.id, ctx.callbackQuery!.message!.message_id);
     return showBroadcastGroupPostList(ctx, post.group_id, false);
   }
 
   if (data.startsWith("bgp:back:")) {
     const groupId = parseId(data, 2);
-    const previewMsgId = parseId(data, 3);
-    await safeDelete(ctx.api, ctx.chat!.id, previewMsgId);
+    const previewIds = decodePreviewIds(parsePreviewIdsRaw(data));
+    await safeDeleteMultiple(ctx.api, ctx.chat!.id, previewIds);
     await safeDelete(ctx.api, ctx.chat!.id, ctx.callbackQuery!.message!.message_id);
     return showBroadcastGroupPostList(ctx, groupId, false);
   }
@@ -337,7 +339,7 @@ export async function handleCallback(ctx: BotContext) {
 
   if (data.startsWith("pp:auto:")) {
     const id = parseId(data, 2);
-    const previewMsgId = parseId(data, 3);
+    const previewIds = decodePreviewIds(parsePreviewIdsRaw(data));
     const post = db.getPlanPost(id);
     if (!post) return;
     if (post.is_auto_time) {
@@ -346,26 +348,26 @@ export async function handleCallback(ctx: BotContext) {
       const cmp = db.getCampaign(post.campaign_id);
       db.updatePlanPost(id, { is_auto_time: 1, send_time: cmp?.default_time || "12:00" });
     }
-    if (previewMsgId) await safeDelete(ctx.api, ctx.chat!.id, previewMsgId);
+    await safeDeleteMultiple(ctx.api, ctx.chat!.id, previewIds);
     await safeDelete(ctx.api, ctx.chat!.id, ctx.callbackQuery!.message!.message_id);
     return showPlanPostDetail(ctx, id);
   }
 
   if (data.startsWith("pp:back:")) {
     const cmpId = parseId(data, 2);
-    const previewMsgId = parseId(data, 3);
-    await safeDelete(ctx.api, ctx.chat!.id, previewMsgId);
+    const previewIds = decodePreviewIds(parsePreviewIdsRaw(data));
+    await safeDeleteMultiple(ctx.api, ctx.chat!.id, previewIds);
     await safeDelete(ctx.api, ctx.chat!.id, ctx.callbackQuery!.message!.message_id);
     return showPlanPosts(ctx, cmpId, false);
   }
 
   if (data.startsWith("pp:del:")) {
     const postId = parseId(data, 2);
-    const previewMsgId = parseId(data, 3);
+    const previewIds = decodePreviewIds(parsePreviewIdsRaw(data));
     const post = db.getPlanPost(postId);
     if (!post) return;
     db.removePlanPost(post.id);
-    if (previewMsgId) await safeDelete(ctx.api, ctx.chat!.id, previewMsgId);
+    await safeDeleteMultiple(ctx.api, ctx.chat!.id, previewIds);
     await safeDelete(ctx.api, ctx.chat!.id, ctx.callbackQuery!.message!.message_id);
     return showPlanPosts(ctx, post.campaign_id, false);
   }
@@ -380,8 +382,8 @@ export async function handleCallback(ctx: BotContext) {
 
   if (data.startsWith("pp:datetime:")) {
     const id = parseId(data, 2);
-    const previewMsgId = parseId(data, 3);
-    if (previewMsgId) await safeDelete(ctx.api, ctx.chat!.id, previewMsgId);
+    const previewIds = decodePreviewIds(parsePreviewIdsRaw(data));
+    await safeDeleteMultiple(ctx.api, ctx.chat!.id, previewIds);
     ctx.session.convPayload = String(id);
     await ctx.conversation.enter("planDatetimeConversation");
     return;
@@ -437,6 +439,13 @@ export async function handleCallback(ctx: BotContext) {
 }
 
 /* ═══════════════════ Helpers ═══════════════════════════════ */
+
+/** Extract the raw preview-ids segment (3rd colon-separated part) from callback data */
+function parsePreviewIdsRaw(data: string): string {
+  const parts = data.split(":");
+  // The preview IDs are always the 4th segment (index 3), e.g. bgp:del:42:123-124-125
+  return parts.slice(3).join(":"); // handle edge case if IDs contain colons (they don't, but safer)
+}
 
 function parseId(data: string, colonIndex: number): number {
   return parseInt(data.split(":")[colonIndex] ?? "0", 10);
