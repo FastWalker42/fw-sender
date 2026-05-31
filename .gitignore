@@ -37,3 +37,8 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 *.db
 *.db-wal
 *.db-shm
+
+# SQLite session
+*.session
+*.session-wal
+*.session-shm
