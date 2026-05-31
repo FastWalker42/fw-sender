@@ -34,24 +34,42 @@ export function stopScheduler() {
   }
 }
 
-async function sendToChannel(api: Api, chatId: string, fromChatId: string, messageId: number): Promise<void> {
+/**
+ * Send a post (single message or media group / album) to a channel.
+ * Uses `copyMessages` (plural) when there are multiple message_ids
+ * so that media groups are sent as a single album.
+ */
+async function sendToChannel(api: Api, chatId: string, fromChatId: string, messageIds: number[]): Promise<void> {
+  if (messageIds.length === 0) return;
+
   if (userbot.isLoggedIn() && userbot.isBotRelayReady()) {
     const ubId = userbot.getUserbotId();
     if (ubId) {
-      // 1. Bot copies the post to userbot's DM
-      const copied = await api.copyMessage(ubId, parseInt(fromChatId), messageId);
-      // 2. Userbot gets latest msg from bot DM and forwards to channel
-      await userbot.relayViaBot(chatId);
+      // 1. Bot copies the post(s) to userbot's DM
+      if (messageIds.length === 1) {
+        await api.copyMessage(ubId, parseInt(fromChatId), messageIds[0]!);
+      } else {
+        await api.copyMessages(ubId, parseInt(fromChatId), messageIds);
+      }
+      // 2. Userbot gets latest msg(s) from bot DM and forwards to channel
+      await userbot.relayViaBot(chatId, messageIds.length);
       // 3. Relay marker for audit trail (non-critical)
       try {
-        await api.sendMessage(ubId, `relay → ${chatId}`, {
-          reply_parameters: { message_id: copied.message_id },
-        });
+        // Get the last copied message id for the relay marker reply
+        const copiedMsgId = await api.sendMessage(ubId, `relay → ${chatId}`);
+        // no-op: just a marker
+        void copiedMsgId;
       } catch { /* non-critical */ }
       return;
     }
   }
-  await api.copyMessage(chatId, parseInt(fromChatId), messageId);
+
+  // Fallback: direct Bot API copy (no userbot relay)
+  if (messageIds.length === 1) {
+    await api.copyMessage(chatId, parseInt(fromChatId), messageIds[0]!);
+  } else {
+    await api.copyMessages(chatId, parseInt(fromChatId), messageIds);
+  }
 }
 
 /* ═══════════════ Plan Posts ════════════════════════════════ */
@@ -59,9 +77,10 @@ async function sendToChannel(api: Api, chatId: string, fromChatId: string, messa
 async function processPlanPosts(api: Api) {
   const due = db.getAllDuePlanPosts();
   for (const post of due) {
+    const messageIds = db.parseMessageIds(post);
     for (const chatId of post.channel_chat_ids) {
       try {
-        await sendToChannel(api, chatId, post.chat_id, post.message_id);
+        await sendToChannel(api, chatId, post.chat_id, messageIds);
         console.log(`[scheduler] plan post ${post.id} → ${chatId}`);
       } catch (err) {
         console.error(`[scheduler] failed plan post ${post.id} → ${chatId}:`, err);
@@ -112,9 +131,11 @@ async function processBroadcasts(api: Api) {
       continue;
     }
 
+    const messageIds = db.parseMessageIds(post);
+
     for (const chatId of group.channel_chat_ids) {
       try {
-        await sendToChannel(api, chatId, post.chat_id, post.message_id);
+        await sendToChannel(api, chatId, post.chat_id, messageIds);
         console.log(`[scheduler] broadcast cmp:${group.campaign_id} group:${group.id} post:${post.id} → ${chatId}`);
       } catch (err) {
         console.error(`[scheduler] failed broadcast cmp:${group.campaign_id} group:${group.id} → ${chatId}:`, err);

@@ -181,19 +181,24 @@ export async function forwardToChannel(
 
 export async function relayViaBot(
   toChatId: string,
+  messageCount = 1,
 ): Promise<void> {
   const c = getClient();
   if (!c) throw new Error("Userbot not connected");
   if (!botRelayReady) throw new Error("Bot relay not initialized");
 
-  const history = await c.getHistory(BOT_ID, { limit: 1 });
-  const latest = history[0];
-  if (!latest) throw new Error("No messages from bot to relay");
+  // Fetch the last N messages from bot DM (N = number of items in the album)
+  const history = await c.getHistory(BOT_ID, { limit: Math.max(messageCount, 1) });
+  if (!history || history.length === 0) throw new Error("No messages from bot to relay");
+
+  // Take the latest `messageCount` messages, sorted by id ascending
+  const msgs = history.slice(0, messageCount).reverse();
+  const msgIds = msgs.map((m) => m.id);
 
   const numericId = parseInt(toChatId, 10);
   await c.forwardMessagesById({
     fromChatId: BOT_ID,
-    messages: [latest.id],
+    messages: msgIds,
     toChatId: numericId,
     noAuthor: true,
   });

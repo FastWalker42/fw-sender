@@ -159,6 +159,24 @@ export function initDb() {
     `);
     console.log("[db] migrated: recreated broadcast_send_log with group_id column");
   }
+
+  // Migrate: add message_ids column to broadcast_group_posts
+  const bgpCols = db.query("PRAGMA table_info(broadcast_group_posts)").all() as { name: string }[];
+  if (bgpCols.length > 0 && !bgpCols.some((c) => c.name === "message_ids")) {
+    db.exec("ALTER TABLE broadcast_group_posts ADD COLUMN message_ids TEXT");
+    // Backfill: set message_ids = json_array(message_id) for existing rows
+    db.exec("UPDATE broadcast_group_posts SET message_ids = json_array(message_id) WHERE message_ids IS NULL");
+    console.log("[db] migrated: added message_ids to broadcast_group_posts");
+  }
+
+  // Migrate: add message_ids column to plan_posts
+  const ppCols = db.query("PRAGMA table_info(plan_posts)").all() as { name: string }[];
+  if (ppCols.length > 0 && !ppCols.some((c) => c.name === "message_ids")) {
+    db.exec("ALTER TABLE plan_posts ADD COLUMN message_ids TEXT");
+    // Backfill: set message_ids = json_array(message_id) for existing rows
+    db.exec("UPDATE plan_posts SET message_ids = json_array(message_id) WHERE message_ids IS NULL");
+    console.log("[db] migrated: added message_ids to plan_posts");
+  }
 }
 
 /* ═══════════════════════ Channels ══════════════════════════ */
@@ -319,10 +337,12 @@ export function getBroadcastGroupPost(id: number): BroadcastGroupPost | null {
   return db.query("SELECT * FROM broadcast_group_posts WHERE id = ?").get(id) as BroadcastGroupPost | null;
 }
 
-export function addBroadcastGroupPost(groupId: number, chatId: string, messageId: number, label: string): BroadcastGroupPost {
+export function addBroadcastGroupPost(groupId: number, chatId: string, messageIds: number[], label: string): BroadcastGroupPost {
+  const firstMsgId = messageIds[0] ?? 0;
+  const idsJson = JSON.stringify(messageIds);
   const r = db.query(
-    "INSERT INTO broadcast_group_posts (group_id, chat_id, message_id, label) VALUES (?,?,?,?)",
-  ).run(groupId, chatId, messageId, label);
+    "INSERT INTO broadcast_group_posts (group_id, chat_id, message_id, message_ids, label) VALUES (?,?,?,?,?)",
+  ).run(groupId, chatId, firstMsgId, idsJson, label);
   return getBroadcastGroupPost(Number(r.lastInsertRowid))!;
 }
 
@@ -428,11 +448,13 @@ export function getPlanPost(id: number): PlanPost | null {
   return db.query("SELECT * FROM plan_posts WHERE id = ?").get(id) as PlanPost | null;
 }
 
-export function addPlanPost(campaignId: number, chatId: string, messageId: number, label: string): PlanPost {
+export function addPlanPost(campaignId: number, chatId: string, messageIds: number[], label: string): PlanPost {
+  const firstMsgId = messageIds[0] ?? 0;
+  const idsJson = JSON.stringify(messageIds);
   const mx = db.query("SELECT COALESCE(MAX(position),-1) as m FROM plan_posts WHERE campaign_id = ?").get(campaignId) as { m: number };
   const r = db.query(
-    "INSERT INTO plan_posts (campaign_id, chat_id, message_id, label, position) VALUES (?,?,?,?,?)",
-  ).run(campaignId, chatId, messageId, label, mx.m + 1);
+    "INSERT INTO plan_posts (campaign_id, chat_id, message_id, message_ids, label, position) VALUES (?,?,?,?,?,?)",
+  ).run(campaignId, chatId, firstMsgId, idsJson, label, mx.m + 1);
   return getPlanPost(Number(r.lastInsertRowid))!;
 }
 
@@ -502,6 +524,19 @@ export function getActiveCampaigns(): (Campaign & { channel_chat_ids: string[] }
     ...c,
     channel_chat_ids: getCampaignChannels(c.id).map((ch) => ch.chat_id),
   }));
+}
+
+/** Parse message_ids from JSON string, falling back to legacy message_id field */
+export function parseMessageIds(post: { message_ids?: string | null; message_id: number }): number[] {
+  if (post.message_ids) {
+    try {
+      const parsed = JSON.parse(post.message_ids);
+      if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === "number") {
+        return parsed as number[];
+      }
+    } catch { /* fall through */ }
+  }
+  return [post.message_id];
 }
 
 export { db };

@@ -249,11 +249,18 @@ export async function showBroadcastGroupPostPreview(ctx: BotContext, postId: num
   if (!group) return;
 
   const chatId = ctx.chat!.id;
+  const messageIds = db.parseMessageIds(post);
 
   let previewMsgId: number;
   try {
-    const sent = await ctx.api.copyMessage(chatId, parseInt(post.chat_id), post.message_id);
-    previewMsgId = sent.message_id;
+    if (messageIds.length === 1) {
+      const sent = await ctx.api.copyMessage(chatId, parseInt(post.chat_id), messageIds[0]!);
+      previewMsgId = sent.message_id;
+    } else {
+      const sent = await ctx.api.copyMessages(chatId, parseInt(post.chat_id), messageIds);
+      // copyMessages returns an array; use the last message_id for the reply
+      previewMsgId = sent[sent.length - 1]!.message_id;
+    }
   } catch {
     await ctx.reply(`${e("⚠️", E.WARNING)} Не удалось загрузить пост.`, { parse_mode: "HTML" });
     return;
@@ -319,12 +326,18 @@ export async function showPlanPostDetail(ctx: BotContext, postId: number) {
 
   const cmp = db.getCampaign(post.campaign_id);
   const chatId = ctx.chat!.id;
+  const messageIds = db.parseMessageIds(post);
 
   // Send preview (the actual post content)
   let previewMsgId: number;
   try {
-    const sent = await ctx.api.copyMessage(chatId, parseInt(post.chat_id), post.message_id);
-    previewMsgId = sent.message_id;
+    if (messageIds.length === 1) {
+      const sent = await ctx.api.copyMessage(chatId, parseInt(post.chat_id), messageIds[0]!);
+      previewMsgId = sent.message_id;
+    } else {
+      const sent = await ctx.api.copyMessages(chatId, parseInt(post.chat_id), messageIds);
+      previewMsgId = sent[sent.length - 1]!.message_id;
+    }
   } catch {
     await ctx.reply(`${e("⚠️", E.WARNING)} Не удалось загрузить пост.`, { parse_mode: "HTML" });
     return;

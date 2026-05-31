@@ -53,7 +53,10 @@ export interface BroadcastGroupPost {
   id: number;
   group_id: number;
   chat_id: string;
+  /** Legacy: single message_id (kept for migration compat) */
   message_id: number;
+  /** JSON array of message_ids — supports media groups (albums) */
+  message_ids: string;
   label: string;
   created_at: string;
 }
@@ -71,7 +74,10 @@ export interface PlanPost {
   id: number;
   campaign_id: number;
   chat_id: string;
+  /** Legacy: single message_id (kept for migration compat) */
   message_id: number;
+  /** JSON array of message_ids — supports media groups (albums) */
+  message_ids: string;
   label: string;
   send_date: string | null;
   send_time: string | null;

@@ -17,6 +17,73 @@ import {
 import * as db from "../db";
 import * as userbot from "../userbot";
 
+/* ═══════════ Media-group buffer ════════════════════════════════
+   When a user sends an album (media_group_id), Telegram delivers
+   each item as a separate update.  We buffer them for a short
+   window so that we can collect ALL message_ids belonging to one
+   album before persisting the post.
+   ═════════════════════════════════════════════════════════════ */
+
+interface MediaGroupBuffer {
+  chatId: string;
+  messageIds: number[];
+  label: string;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+/** In-flight media-group buffers keyed by `${chatId}:${mediaGroupId}` */
+const mediaGroupBuffers = new Map<string, MediaGroupBuffer>();
+
+const MEDIA_GROUP_WINDOW_MS = 1_500; // 1.5 s — Telegram sends album parts within ~1 s
+
+/** Callback type invoked once all parts of a media group are collected (or for a single message) */
+type PostReadyCallback = (chatId: string, messageIds: number[], label: string) => Promise<void>;
+
+/**
+ * Feed a message into the media-group buffer.
+ * If the message has no `media_group_id`, the callback fires immediately.
+ * If it does, we wait for sibling messages and fire once the window closes.
+ */
+function feedMediaGroup(
+  chatId: string,
+  messageId: number,
+  mediaGroupId: string | undefined,
+  label: string,
+  onReady: PostReadyCallback,
+): void {
+  if (!mediaGroupId) {
+    // Single message (no album) — fire immediately
+    onReady(chatId, [messageId], label);
+    return;
+  }
+
+  const key = `${chatId}:${mediaGroupId}`;
+
+  const existing = mediaGroupBuffers.get(key);
+  if (existing) {
+    // Append to existing buffer
+    existing.messageIds.push(messageId);
+    // Reset the timer so the window extends from the last seen part
+    clearTimeout(existing.timer);
+    existing.timer = setTimeout(() => flushBuffer(key, onReady), MEDIA_GROUP_WINDOW_MS);
+  } else {
+    // First part of a new album
+    const timer = setTimeout(() => flushBuffer(key, onReady), MEDIA_GROUP_WINDOW_MS);
+    mediaGroupBuffers.set(key, { chatId, messageIds: [messageId], label, timer });
+  }
+}
+
+function flushBuffer(key: string, onReady: PostReadyCallback) {
+  const buf = mediaGroupBuffers.get(key);
+  if (!buf) return;
+  mediaGroupBuffers.delete(key);
+  // Sort message_ids so they stay in original order
+  buf.messageIds.sort((a, b) => a - b);
+  onReady(buf.chatId, buf.messageIds, buf.label);
+}
+
+/* ═══════════ Main message handler ═══════════════════════════ */
+
 export async function handleMessage(ctx: BotContext) {
   if (!isAdmin(ctx)) return;
   if (!ctx.message) return;
@@ -252,20 +319,29 @@ export async function handleMessage(ctx: BotContext) {
       const count = db.countBroadcastGroupPosts(state.id);
       const label = getPostLabel(msg, count);
 
-      try {
-        const newPost = db.addBroadcastGroupPost(
-          state.id,
-          String(ctx.chat!.id),
-          msg.message_id,
-          label,
-        );
-        clearAwaiting(userId);
-        await ctx.reply(`${e("✅", E.CONFIRM)} Пост «${newPost.label}» добавлен в группу.`, { parse_mode: "HTML" });
-        await showBroadcastGroupPostList(ctx, state.id);
-      } catch {
-        await ctx.reply(`${e("⚠️", E.WARNING)} Этот пост уже добавлен.`, { parse_mode: "HTML" });
-        clearAwaiting(userId);
-      }
+      // Buffer media-group messages (albums), or handle single message immediately
+      feedMediaGroup(
+        String(ctx.chat!.id),
+        msg.message_id,
+        msg.media_group_id,
+        label,
+        async (chatId, messageIds) => {
+          try {
+            const newPost = db.addBroadcastGroupPost(
+              state.id!,
+              chatId,
+              messageIds,
+              label,
+            );
+            clearAwaiting(userId);
+            await ctx.reply(`${e("✅", E.CONFIRM)} Пост «${newPost.label}» добавлен в группу.`, { parse_mode: "HTML" });
+            await showBroadcastGroupPostList(ctx, state.id!);
+          } catch {
+            await ctx.reply(`${e("⚠️", E.WARNING)} Этот пост уже добавлен.`, { parse_mode: "HTML" });
+            clearAwaiting(userId);
+          }
+        },
+      );
       return;
     }
 
@@ -274,24 +350,34 @@ export async function handleMessage(ctx: BotContext) {
       if (!state.id) return;
       const ppCount = db.getUnsentPlanPosts(state.id).length;
       const ppLabel = getPostLabel(msg, ppCount);
-      setAwaiting(userId, {
-        action: "pp_enter_time",
-        id: state.id,
-        pending: { chatId: String(ctx.chat!.id), messageId: msg.message_id, label: ppLabel },
-      });
 
-      const ppKb = new InlineKeyboard();
-      if (BOT_USERNAME) {
-        const tw = tgwidget(BOT_USERNAME).date({ mode: "time" }).style({ liquidGlass: true, adoptTgPalette: true });
-        ppKb.webApp("Выбрать время", tw.url()).icon(E.SCHEDULE).row();
-      }
-      ppKb.text("Отмена", `pp:list:${state.id}`).icon(E.CANCEL).row();
+      // Buffer media-group messages (albums), or handle single message immediately
+      feedMediaGroup(
+        String(ctx.chat!.id),
+        msg.message_id,
+        msg.media_group_id,
+        ppLabel,
+        async (chatId, messageIds) => {
+          setAwaiting(userId, {
+            action: "pp_enter_time",
+            id: state.id,
+            pending: { chatId, messageId: messageIds[0] ?? 0, messageIds, label: ppLabel },
+          });
 
-      await ctx.reply(
-        `${e("📥", E.PLAN)} Пост «${ppLabel}» принят.\n\n` +
-          `${e("🕓", E.SCHEDULE)} <b>Время постинга</b>\n` +
-          `Выберите через виджет или введите в формате <code>ЧЧ:ММ</code>:`,
-        { reply_markup: ppKb, parse_mode: "HTML" },
+          const ppKb = new InlineKeyboard();
+          if (BOT_USERNAME) {
+            const tw = tgwidget(BOT_USERNAME).date({ mode: "time" }).style({ liquidGlass: true, adoptTgPalette: true });
+            ppKb.webApp("Выбрать время", tw.url()).icon(E.SCHEDULE).row();
+          }
+          ppKb.text("Отмена", `pp:list:${state.id}`).icon(E.CANCEL).row();
+
+          await ctx.reply(
+            `${e("📥", E.PLAN)} Пост «${ppLabel}» принят.\n\n` +
+              `${e("🕓", E.SCHEDULE)} <b>Время постинга</b>\n` +
+              `Выберите через виджет или введите в формате <code>ЧЧ:ММ</code>:`,
+            { reply_markup: ppKb, parse_mode: "HTML" },
+          );
+        },
       );
       return;
     }
@@ -330,7 +416,8 @@ export async function handleMessage(ctx: BotContext) {
 
       let newPlanPost;
       try {
-        newPlanPost = db.addPlanPost(state.id, state.pending.chatId, state.pending.messageId, state.pending.label);
+        const msgIds: number[] = state.pending.messageIds ?? [state.pending.messageId ?? 0];
+        newPlanPost = db.addPlanPost(state.id, state.pending.chatId, msgIds, state.pending.label);
         db.updatePlanPost(newPlanPost.id, { send_time: ppTime });
       } catch {
         await ctx.reply(`${e("⚠️", E.WARNING)} Этот пост уже добавлен.`, { parse_mode: "HTML" });

@@ -30,6 +30,8 @@ interface AwaitState {
   pending?: {
     chatId: string;
     messageId: number;
+    /** Array of message_ids for media groups (albums) */
+    messageIds?: number[];
     label: string;
     days?: number;
   };
