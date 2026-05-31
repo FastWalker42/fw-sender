@@ -6,7 +6,7 @@ import { isAdmin } from "../utils/admin";
 import { e, E } from "../utils/emoji";
 import { getAwaiting, clearAwaiting, setAwaiting } from "./callbacks";
 import { getPostLabel } from "../utils/post-label";
-import { showChannelList } from "../menus/channel-menu";
+import { showChannelList, showChannelDetail } from "../menus/channel-menu";
 import {
   showCampaignDetail,
   showBroadcastGroupDetail,
@@ -100,6 +100,7 @@ export async function handleMessage(ctx: BotContext) {
       let chatId: string | null = null;
       let title = "";
       let username: string | null = null;
+      let messageThreadId: number | null = null;
 
       // Forwarded from channel
       if (msg.forward_origin && "type" in msg.forward_origin && msg.forward_origin.type === "channel") {
@@ -108,20 +109,36 @@ export async function handleMessage(ctx: BotContext) {
         title = ch.title || "";
         username = ("username" in ch ? ch.username : null) ?? null;
       }
-      // Text: ID or @username
+      // Text: URL with topic (e.g. https://t.me/chat/123 or https://t.me/c/123456/789)
       else if (msg.text) {
         const text = msg.text.trim();
-        if (text.startsWith("-100") && /^-\d+$/.test(text)) {
+
+        // Try parsing as a forum topic URL
+        const urlMatch = text.match(/^https?:\/\/t\.me\/(?:c\/(\d+)\/(\d+)|([^\/]+)\/(\d+))$/);
+        if (urlMatch) {
+          if (urlMatch[1]) {
+            // https://t.me/c/123456/789 → chat_id = -100123456, topic_id = 789
+            chatId = `-100${urlMatch[1]}`;
+            messageThreadId = parseInt(urlMatch[2]!);
+          } else {
+            // https://t.me/chat_username/123
+            username = urlMatch[3]!;
+            chatId = `@${username}`;
+            messageThreadId = parseInt(urlMatch[4]!);
+          }
+        }
+        // ID or @username (no topic)
+        else if (text.startsWith("-100") && /^-\d+$/.test(text)) {
           chatId = text;
         } else if (text.startsWith("@")) {
           username = text.slice(1);
           chatId = text; // will verify below
         } else {
-          await ctx.reply(`${e("⚠️", E.WARNING)} Отправьте ID канала (-100...), @username или пересланное сообщение.`, { parse_mode: "HTML" });
+          await ctx.reply(`${e("⚠️", E.WARNING)} Отправьте ID канала (-100...), @username, ссылку на топик или пересланное сообщение.`, { parse_mode: "HTML" });
           return;
         }
       } else {
-        await ctx.reply(`${e("⚠️", E.WARNING)} Отправьте текст с ID/@username или перешлите сообщение из канала.`, { parse_mode: "HTML" });
+        await ctx.reply(`${e("⚠️", E.WARNING)} Отправьте текст с ID/@username, ссылку на топик или перешлите сообщение из канала.`, { parse_mode: "HTML" });
         return;
       }
 
@@ -130,11 +147,11 @@ export async function handleMessage(ctx: BotContext) {
         return;
       }
 
-      // Verify bot access to channel
+      // Verify bot access to channel/supergroup
       try {
         const chat = await ctx.api.getChat(chatId);
-        if (chat.type !== "channel") {
-          await ctx.reply(`${e("⚠️", E.WARNING)} Это не канал.`, { parse_mode: "HTML" });
+        if (chat.type !== "channel" && chat.type !== "supergroup") {
+          await ctx.reply(`${e("⚠️", E.WARNING)} Это не канал и не супергруппа.`, { parse_mode: "HTML" });
           return;
         }
         chatId = String(chat.id);
@@ -145,16 +162,18 @@ export async function handleMessage(ctx: BotContext) {
         return;
       }
 
-      // Check duplicate
-      if (db.getChannelByChatId(chatId)) {
-        await ctx.reply(`${e("ℹ️", E.INFO)} Этот канал уже добавлен.`, { parse_mode: "HTML" });
+      // Check duplicate (same chat_id + same topic)
+      if (db.getChannelByChatIdAndTopic(chatId, messageThreadId)) {
+        const topicNote = messageThreadId ? ` с топиком ${messageThreadId}` : "";
+        await ctx.reply(`${e("ℹ️", E.INFO)} Этот канал${topicNote} уже добавлен.`, { parse_mode: "HTML" });
         clearAwaiting(userId);
         return;
       }
 
-      db.addChannel(chatId, title, username);
+      db.addChannel(chatId, title, username, messageThreadId);
       clearAwaiting(userId);
-      await ctx.reply(`${e("✅", E.CONFIRM)} Канал <b>${title || chatId}</b> добавлен.`, { parse_mode: "HTML" });
+      const topicNote = messageThreadId ? ` (топик ${messageThreadId})` : "";
+      await ctx.reply(`${e("✅", E.CONFIRM)} Канал <b>${title || chatId}</b>${topicNote} добавлен.`, { parse_mode: "HTML" });
       await showChannelList(ctx, false);
       return;
     }
@@ -518,6 +537,23 @@ export async function handleMessage(ctx: BotContext) {
         await ctx.reply(`${e("⚠️", E.WARNING)} Ошибка импорта: ${err?.message || err}`, { parse_mode: "HTML" });
         clearAwaiting(userId);
       }
+      return;
+    }
+
+    /* ── Set channel topic ─────────────────────────────────── */
+    case "set_channel_topic": {
+      if (!state.id) return;
+      if (!msg.text || !/^\d+$/.test(msg.text.trim())) {
+        await ctx.reply(`${e("⚠️", E.WARNING)} Введите число (ID топика) или 0 чтобы сбросить.`, { parse_mode: "HTML" });
+        return;
+      }
+      const val = parseInt(msg.text.trim());
+      db.updateChannel(state.id, { message_thread_id: val === 0 ? null : val });
+      clearAwaiting(userId);
+      const updated = db.getChannel(state.id);
+      const topicNote = updated?.message_thread_id ? ` (топик ${updated.message_thread_id})` : " сброшен";
+      await ctx.reply(`${e("✅", E.CONFIRM)} Топик${topicNote}.`, { parse_mode: "HTML" });
+      await showChannelDetail(ctx, state.id, false);
       return;
     }
 

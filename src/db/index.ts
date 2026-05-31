@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import type {
   Channel,
+  ChannelTarget,
   Campaign,
   BroadcastGroup,
   BroadcastGroupPost,
@@ -177,6 +178,30 @@ export function initDb() {
     db.exec("UPDATE plan_posts SET message_ids = json_array(message_id) WHERE message_ids IS NULL");
     console.log("[db] migrated: added message_ids to plan_posts");
   }
+
+  // Migrate: add message_thread_id column to channels + change UNIQUE(chat_id) → UNIQUE(chat_id, message_thread_id)
+  const chColsNow = db.query("PRAGMA table_info(channels)").all() as { name: string }[];
+  if (chColsNow.length > 0 && !chColsNow.some((c) => c.name === "message_thread_id")) {
+    db.exec(`
+      CREATE TABLE channels_new (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id           TEXT NOT NULL,
+        title             TEXT NOT NULL DEFAULT '',
+        username          TEXT,
+        auto_approve      INTEGER NOT NULL DEFAULT 0,
+        message_thread_id INTEGER,
+        added_at          TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(chat_id, message_thread_id)
+      )
+    `);
+    db.exec(`
+      INSERT INTO channels_new (id, chat_id, title, username, auto_approve, message_thread_id, added_at)
+      SELECT id, chat_id, title, username, auto_approve, NULL, added_at FROM channels
+    `);
+    db.exec("DROP TABLE channels");
+    db.exec("ALTER TABLE channels_new RENAME TO channels");
+    console.log("[db] migrated: added message_thread_id to channels, updated UNIQUE constraint");
+  }
 }
 
 /* ═══════════════════════ Channels ══════════════════════════ */
@@ -193,19 +218,27 @@ export function getChannelByChatId(chatId: string): Channel | null {
   return db.query("SELECT * FROM channels WHERE chat_id = ?").get(chatId) as Channel | null;
 }
 
-export function addChannel(chatId: string, title: string, username: string | null): Channel {
-  db.query("INSERT INTO channels (chat_id, title, username) VALUES (?, ?, ?)").run(chatId, title, username);
-  return getChannelByChatId(chatId)!;
+export function getChannelByChatIdAndTopic(chatId: string, messageThreadId: number | null): Channel | null {
+  if (messageThreadId != null) {
+    return db.query("SELECT * FROM channels WHERE chat_id = ? AND message_thread_id = ?").get(chatId, messageThreadId) as Channel | null;
+  }
+  return db.query("SELECT * FROM channels WHERE chat_id = ? AND message_thread_id IS NULL").get(chatId) as Channel | null;
+}
+
+export function addChannel(chatId: string, title: string, username: string | null, messageThreadId: number | null = null): Channel {
+  db.query("INSERT INTO channels (chat_id, title, username, message_thread_id) VALUES (?, ?, ?, ?)").run(chatId, title, username, messageThreadId);
+  return getChannelByChatIdAndTopic(chatId, messageThreadId)!;
 }
 
 export function removeChannel(id: number) {
   db.query("DELETE FROM channels WHERE id = ?").run(id);
 }
 
-export function updateChannel(id: number, f: Partial<Pick<Channel, "auto_approve">>) {
+export function updateChannel(id: number, f: Partial<Pick<Channel, "auto_approve" | "message_thread_id">>) {
   const s: string[] = [];
-  const v: (string | number)[] = [];
+  const v: (string | number | null)[] = [];
   if (f.auto_approve !== undefined) { s.push("auto_approve = ?"); v.push(f.auto_approve); }
+  if (f.message_thread_id !== undefined) { s.push("message_thread_id = ?"); v.push(f.message_thread_id); }
   if (s.length === 0) return;
   v.push(id);
   db.query(`UPDATE channels SET ${s.join(", ")} WHERE id = ?`).run(...v);
@@ -371,7 +404,7 @@ export function wasBroadcastGroupSentToday(groupId: number): boolean {
 }
 
 /** All due broadcast groups across all active campaigns for current time */
-export function getDueBroadcastGroups(currentTime: string, weekday: number): (BroadcastGroup & { channel_chat_ids: string[] })[] {
+export function getDueBroadcastGroups(currentTime: string, weekday: number): (BroadcastGroup & { channel_targets: ChannelTarget[] })[] {
   const today = new Date().toISOString().slice(0, 10);
 
   // Fetch all active groups with campaign jitter
@@ -401,7 +434,7 @@ export function getDueBroadcastGroups(currentTime: string, weekday: number): (Br
 
   return due.map((bg) => {
     const channels = getCampaignChannels(bg.campaign_id);
-    return { ...bg, channel_chat_ids: channels.map((c) => c.chat_id) };
+    return { ...bg, channel_targets: channels.map(toTarget) };
   });
 }
 
@@ -484,7 +517,7 @@ export function markPlanPostSent(id: number) {
 }
 
 /** All due plan posts across all active campaigns */
-export function getAllDuePlanPosts(): (PlanPost & { channel_chat_ids: string[] })[] {
+export function getAllDuePlanPosts(): (PlanPost & { channel_targets: ChannelTarget[] })[] {
   const now = new Date();
   const date = now.toISOString().slice(0, 10);
   const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
@@ -513,16 +546,16 @@ export function getAllDuePlanPosts(): (PlanPost & { channel_chat_ids: string[] }
 
   return due.map((pp) => {
     const channels = getCampaignChannels(pp.campaign_id);
-    return { ...pp, channel_chat_ids: channels.map((c) => c.chat_id) };
+    return { ...pp, channel_targets: channels.map(toTarget) };
   });
 }
 
-/** All active campaigns with their channel chat_ids (for scheduler) */
-export function getActiveCampaigns(): (Campaign & { channel_chat_ids: string[] })[] {
+/** All active campaigns with their channel targets (for scheduler) */
+export function getActiveCampaigns(): (Campaign & { channel_targets: ChannelTarget[] })[] {
   const campaigns = db.query("SELECT * FROM campaigns WHERE is_active = 1").all() as Campaign[];
   return campaigns.map((c) => ({
     ...c,
-    channel_chat_ids: getCampaignChannels(c.id).map((ch) => ch.chat_id),
+    channel_targets: getCampaignChannels(c.id).map(toTarget),
   }));
 }
 
@@ -537,6 +570,12 @@ export function parseMessageIds(post: { message_ids?: string | null; message_id:
     } catch { /* fall through */ }
   }
   return [post.message_id];
+}
+
+/* ═══════════════ Helpers ═════════════════════════════════════ */
+
+function toTarget(ch: Channel): ChannelTarget {
+  return { chat_id: ch.chat_id, message_thread_id: ch.message_thread_id };
 }
 
 export { db };

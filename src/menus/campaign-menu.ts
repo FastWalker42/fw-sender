@@ -67,7 +67,10 @@ export async function showCampaignDetail(ctx: BotContext, id: number, edit = tru
     ? `${e("✅", E.ACTIVE)} Активна`
     : `${e("🚫", E.STOPPED)} Остановлена`;
   const chNames = channels.length
-    ? channels.map((c) => c.title || c.username || c.chat_id).join(", ")
+    ? channels.map((c) => {
+        const base = c.title || c.username || c.chat_id;
+        return c.message_thread_id ? `${base} (топик ${c.message_thread_id})` : base;
+      }).join(", ")
     : "—";
 
   const jitterText = cmp.jitter > 0 ? `±${cmp.jitter} мин.` : "выкл.";
@@ -122,7 +125,8 @@ export async function showCampaignChannels(ctx: BotContext, cmpId: number, edit 
   const kb = new InlineKeyboard();
   for (const ch of linked) {
     const label = ch.title || ch.username || ch.chat_id;
-    kb.text(label, `cmpch:unlink:${cmpId}:${ch.id}`).icon(E.CANCEL).row();
+    const fullLabel = ch.message_thread_id ? `${label} (топик ${ch.message_thread_id})` : label;
+    kb.text(fullLabel, `cmpch:unlink:${cmpId}:${ch.id}`).icon(E.CANCEL).row();
   }
   kb.text("Привязать канал", `cmpch:link:${cmpId}`).icon(E.ADD).row();
   kb.text("Назад", `cmp:${cmpId}`).icon(E.BACK).row();
@@ -151,7 +155,8 @@ export async function showLinkChannelPicker(ctx: BotContext, cmpId: number) {
   } else {
     for (const ch of available) {
       const label = ch.title || ch.username || ch.chat_id;
-      kb.text(label, `cmpch:dolink:${cmpId}:${ch.id}`).icon(E.CHANNELS).row();
+      const fullLabel = ch.message_thread_id ? `${label} (топик ${ch.message_thread_id})` : label;
+      kb.text(fullLabel, `cmpch:dolink:${cmpId}:${ch.id}`).icon(E.CHANNELS).row();
     }
   }
   kb.text("Назад", `cmpch:list:${cmpId}`).icon(E.BACK).row();

@@ -7,7 +7,15 @@ export interface Channel {
   title: string;
   username: string | null;
   auto_approve: number;
+  /** Forum topic ID (null for regular channels) */
+  message_thread_id: number | null;
   added_at: string;
+}
+
+/** Lightweight target used by the scheduler */
+export interface ChannelTarget {
+  chat_id: string;
+  message_thread_id: number | null;
 }
 
 export interface Campaign {

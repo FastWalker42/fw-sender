@@ -1,4 +1,5 @@
 import type { Api } from "grammy";
+import type { ChannelTarget } from "../types";
 import { ADMIN_IDS } from "../config";
 import { e, E } from "../utils/emoji";
 import * as db from "../db";
@@ -35,12 +36,17 @@ export function stopScheduler() {
 }
 
 /**
- * Send a post (single message or media group / album) to a channel.
+ * Send a post (single message or media group / album) to a channel / forum topic.
  * Uses `copyMessages` (plural) when there are multiple message_ids
  * so that media groups are sent as a single album.
+ * When `target.message_thread_id` is set, the message is sent to a specific
+ * forum topic.
  */
-async function sendToChannel(api: Api, chatId: string, fromChatId: string, messageIds: number[]): Promise<void> {
+async function sendToChannel(api: Api, target: ChannelTarget, fromChatId: string, messageIds: number[]): Promise<void> {
   if (messageIds.length === 0) return;
+
+  const threadId = target.message_thread_id;
+  const extra = threadId != null ? { message_thread_id: threadId } : {};
 
   if (userbot.isLoggedIn() && userbot.isBotRelayReady()) {
     const ubId = userbot.getUserbotId();
@@ -51,13 +57,11 @@ async function sendToChannel(api: Api, chatId: string, fromChatId: string, messa
       } else {
         await api.copyMessages(ubId, parseInt(fromChatId), messageIds);
       }
-      // 2. Userbot gets latest msg(s) from bot DM and forwards to channel
-      await userbot.relayViaBot(chatId, messageIds.length);
+      // 2. Userbot gets latest msg(s) from bot DM and forwards to channel/topic
+      await userbot.relayViaBot(target.chat_id, messageIds.length, threadId);
       // 3. Relay marker for audit trail (non-critical)
       try {
-        // Get the last copied message id for the relay marker reply
-        const copiedMsgId = await api.sendMessage(ubId, `relay → ${chatId}`);
-        // no-op: just a marker
+        const copiedMsgId = await api.sendMessage(ubId, `relay → ${target.chat_id}${threadId ? `/topic:${threadId}` : ""}`);
         void copiedMsgId;
       } catch { /* non-critical */ }
       return;
@@ -66,9 +70,9 @@ async function sendToChannel(api: Api, chatId: string, fromChatId: string, messa
 
   // Fallback: direct Bot API copy (no userbot relay)
   if (messageIds.length === 1) {
-    await api.copyMessage(chatId, parseInt(fromChatId), messageIds[0]!);
+    await api.copyMessage(target.chat_id, parseInt(fromChatId), messageIds[0]!, extra);
   } else {
-    await api.copyMessages(chatId, parseInt(fromChatId), messageIds);
+    await api.copyMessages(target.chat_id, parseInt(fromChatId), messageIds, extra);
   }
 }
 
@@ -78,12 +82,13 @@ async function processPlanPosts(api: Api) {
   const due = db.getAllDuePlanPosts();
   for (const post of due) {
     const messageIds = db.parseMessageIds(post);
-    for (const chatId of post.channel_chat_ids) {
+    for (const target of post.channel_targets) {
       try {
-        await sendToChannel(api, chatId, post.chat_id, messageIds);
-        console.log(`[scheduler] plan post ${post.id} → ${chatId}`);
+        await sendToChannel(api, target, post.chat_id, messageIds);
+        const targetLabel = target.message_thread_id ? `${target.chat_id}/topic:${target.message_thread_id}` : target.chat_id;
+        console.log(`[scheduler] plan post ${post.id} → ${targetLabel}`);
       } catch (err) {
-        console.error(`[scheduler] failed plan post ${post.id} → ${chatId}:`, err);
+        console.error(`[scheduler] failed plan post ${post.id} → ${target.chat_id}:`, err);
       }
     }
     db.markPlanPostSent(post.id);
@@ -120,7 +125,7 @@ async function processBroadcasts(api: Api) {
   const dueGroups = db.getDueBroadcastGroups(currentTime, weekday);
 
   for (const group of dueGroups) {
-    if (group.channel_chat_ids.length === 0) continue;
+    if (group.channel_targets.length === 0) continue;
 
     // Dedup: skip if already sent today (e.g. after restart within same minute)
     if (db.wasBroadcastGroupSentToday(group.id)) continue;
@@ -133,12 +138,13 @@ async function processBroadcasts(api: Api) {
 
     const messageIds = db.parseMessageIds(post);
 
-    for (const chatId of group.channel_chat_ids) {
+    for (const target of group.channel_targets) {
       try {
-        await sendToChannel(api, chatId, post.chat_id, messageIds);
-        console.log(`[scheduler] broadcast cmp:${group.campaign_id} group:${group.id} post:${post.id} → ${chatId}`);
+        await sendToChannel(api, target, post.chat_id, messageIds);
+        const targetLabel = target.message_thread_id ? `${target.chat_id}/topic:${target.message_thread_id}` : target.chat_id;
+        console.log(`[scheduler] broadcast cmp:${group.campaign_id} group:${group.id} post:${post.id} → ${targetLabel}`);
       } catch (err) {
-        console.error(`[scheduler] failed broadcast cmp:${group.campaign_id} group:${group.id} → ${chatId}:`, err);
+        console.error(`[scheduler] failed broadcast cmp:${group.campaign_id} group:${group.id} → ${target.chat_id}:`, err);
       }
     }
 

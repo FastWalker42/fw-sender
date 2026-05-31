@@ -32,11 +32,15 @@ export async function showChannelDetail(ctx: BotContext, channelId: number, edit
 
   const label = channel.title || channel.username || channel.chat_id;
   const approveStatus = channel.auto_approve ? "ВКЛ ✓" : "ВЫКЛ";
+  const topicInfo = channel.message_thread_id
+    ? `Топик: <code>${channel.message_thread_id}</code>`
+    : "Топик: —";
 
   const text = [
     `${e("📢", E.CHANNELS)} <b>${label}</b>`,
     `ID: <code>${channel.chat_id}</code>`,
     channel.username ? `Username: @${channel.username}` : "",
+    topicInfo,
     `Автоприём заявок: ${channel.auto_approve ? `${e("✅", E.ACTIVE)} Вкл` : `${e("🚫", E.STOPPED)} Выкл`}`,
   ]
     .filter(Boolean)
@@ -44,8 +48,17 @@ export async function showChannelDetail(ctx: BotContext, channelId: number, edit
 
   const kb = new InlineKeyboard()
     .text(`АВТОПРИЁМ ЗАЯВОК: ${approveStatus}`, `ch:approve:${channelId}`).icon(E.ROBOT)
-    .row()
-    .text("Удалить канал", `ch:del:${channelId}`).icon(E.DELETE)
+    .row();
+
+  if (channel.message_thread_id) {
+    kb.text("Изменить топик", `ch:topic:${channelId}`).icon(E.RENAME)
+      .text("Сбросить топик", `ch:cleartopic:${channelId}`).icon(E.CANCEL)
+      .row();
+  } else {
+    kb.text("Задать топик", `ch:topic:${channelId}`).icon(E.STAR).row();
+  }
+
+  kb.text("Удалить канал", `ch:del:${channelId}`).icon(E.DELETE)
     .row()
     .text("Назад", "channels:list").icon(E.BACK)
     .row();

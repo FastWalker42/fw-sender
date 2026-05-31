@@ -54,10 +54,7 @@ export function clearAwaiting(userId: number) {
 /* ═══════════════════ Main router ═══════════════════════════ */
 
 export async function handleCallback(ctx: BotContext) {
-  if (!isAdmin(ctx)) {
-    await ctx.answerCallbackQuery("⛔ Доступ запрещён");
-    return;
-  }
+  if (!isAdmin(ctx)) return;
 
   const data = ctx.callbackQuery?.data;
   if (!data) return;
@@ -79,7 +76,8 @@ export async function handleCallback(ctx: BotContext) {
         "Отправьте:\n" +
         "• Пересланное сообщение из канала\n" +
         "• ID канала (<code>-100...</code>)\n" +
-        "• Username (<code>@channel</code>)",
+        "• Username (<code>@channel</code>)\n" +
+        "• Ссылку на топик (<code>https://t.me/chat/123</code>)",
       { reply_markup: kb, parse_mode: "HTML" },
     );
   }
@@ -94,6 +92,22 @@ export async function handleCallback(ctx: BotContext) {
     if (channel) {
       db.updateChannel(id, { auto_approve: channel.auto_approve ? 0 : 1 });
     }
+    return showChannelDetail(ctx, id);
+  }
+
+  if (data.startsWith("ch:topic:")) {
+    const id = parseId(data, 2);
+    setAwaiting(ctx.from!.id, { action: "set_channel_topic", id });
+    const kb = new InlineKeyboard().text("Отмена", `ch:${id}`).icon(E.CANCEL);
+    return ctx.editMessageText(
+      `${e("💬", E.STAR)} <b>Задать топик</b>\n\nВведите ID топика (число) или <code>0</code> чтобы сбросить:`,
+      { reply_markup: kb, parse_mode: "HTML" },
+    );
+  }
+
+  if (data.startsWith("ch:cleartopic:")) {
+    const id = parseId(data, 2);
+    db.updateChannel(id, { message_thread_id: null });
     return showChannelDetail(ctx, id);
   }
 

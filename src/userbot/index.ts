@@ -167,6 +167,7 @@ export async function forwardToChannel(
   fromChatId: number,
   messageId: number,
   toChatId: string,
+  threadId?: number | null,
 ): Promise<void> {
   const c = getClient();
   if (!c) throw new Error("Userbot not connected");
@@ -176,12 +177,14 @@ export async function forwardToChannel(
     messages: [messageId],
     toChatId: numericId,
     noAuthor: true,
+    ...(threadId != null ? { toThreadId: threadId } : {}),
   });
 }
 
 export async function relayViaBot(
   toChatId: string,
   messageCount = 1,
+  threadId?: number | null,
 ): Promise<void> {
   const c = getClient();
   if (!c) throw new Error("Userbot not connected");
@@ -201,6 +204,7 @@ export async function relayViaBot(
     messages: msgIds,
     toChatId: numericId,
     noAuthor: true,
+    ...(threadId != null ? { toThreadId: threadId } : {}),
   });
 }
 
