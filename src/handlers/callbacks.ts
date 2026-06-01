@@ -257,6 +257,13 @@ export async function handleCallback(ctx: BotContext) {
     return;
   }
 
+  if (data.startsWith("bg:interval:")) {
+    const groupId = parseId(data, 2);
+    ctx.session.convPayload = String(groupId);
+    await ctx.conversation.enter("broadcastGroupIntervalConversation");
+    return;
+  }
+
   if (data.startsWith("bg:days:")) {
     const groupId = parseId(data, 2);
     setAwaiting(ctx.from!.id, { action: "edit_broadcast_days", id: groupId });
@@ -400,6 +407,15 @@ export async function handleCallback(ctx: BotContext) {
     await safeDeleteMultiple(ctx.api, ctx.chat!.id, previewIds);
     ctx.session.convPayload = String(id);
     await ctx.conversation.enter("planDatetimeConversation");
+    return;
+  }
+
+  if (data.startsWith("pp:interval:")) {
+    const id = parseId(data, 2);
+    const previewIds = decodePreviewIds(parsePreviewIdsRaw(data));
+    await safeDeleteMultiple(ctx.api, ctx.chat!.id, previewIds);
+    ctx.session.convPayload = String(id);
+    await ctx.conversation.enter("planPostIntervalConversation");
     return;
   }
 

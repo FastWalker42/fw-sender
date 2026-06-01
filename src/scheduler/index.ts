@@ -91,22 +91,36 @@ async function processPlanPosts(api: Api) {
         console.error(`[scheduler] failed plan post ${post.id} → ${target.chat_id}:`, err);
       }
     }
-    db.markPlanPostSent(post.id);
 
-    const remaining = db.getUnsentPlanPosts(post.campaign_id).length;
-    if (remaining <= 3 && remaining >= 1) {
-      const cmp = db.getCampaign(post.campaign_id);
-      const cmpName = cmp?.name || `#${post.campaign_id}`;
-      const msg =
-        `${e("🔔", E.BELL)} <b>Внимание!</b>\n\n` +
-        `В плане кампании «${cmpName}» осталось <b>${remaining}</b> ` +
-        `${remaining === 1 ? "сообщение" : remaining <= 4 ? "сообщения" : "сообщений"}.`;
+    // Handle interval vs non-interval
+    if (post.interval_minutes > 0) {
+      // Interval mode: increment sent count, mark done when all intervals complete
+      db.incrementPlanPostIntervalSent(post.id);
+      if (db.isPlanPostIntervalComplete(post)) {
+        db.markPlanPostSent(post.id);
+      }
+    } else {
+      // Non-interval: mark sent immediately
+      db.markPlanPostSent(post.id);
+    }
 
-      for (const adminId of ADMIN_IDS) {
-        try {
-          await api.sendMessage(adminId, msg, { parse_mode: "HTML" });
-        } catch {
-          // admin may not have started the bot yet
+    // Low-post warning (only for non-interval or when interval is complete)
+    if (post.interval_minutes <= 0 || db.isPlanPostIntervalComplete(post)) {
+      const remaining = db.getUnsentPlanPosts(post.campaign_id).length;
+      if (remaining <= 3 && remaining >= 1) {
+        const cmp = db.getCampaign(post.campaign_id);
+        const cmpName = cmp?.name || `#${post.campaign_id}`;
+        const msg =
+          `${e("🔔", E.BELL)} <b>Внимание!</b>\n\n` +
+          `В плане кампании «${cmpName}» осталось <b>${remaining}</b> ` +
+          `${remaining === 1 ? "сообщение" : remaining <= 4 ? "сообщения" : "сообщений"}.`;
+
+        for (const adminId of ADMIN_IDS) {
+          try {
+            await api.sendMessage(adminId, msg, { parse_mode: "HTML" });
+          } catch {
+            // admin may not have started the bot yet
+          }
         }
       }
     }
@@ -127,8 +141,11 @@ async function processBroadcasts(api: Api) {
   for (const group of dueGroups) {
     if (group.channel_targets.length === 0) continue;
 
-    // Dedup: skip if already sent today (e.g. after restart within same minute)
-    if (db.wasBroadcastGroupSentToday(group.id)) continue;
+    // For non-interval groups: dedup by day
+    if (group.interval_minutes <= 0) {
+      if (db.wasBroadcastGroupSentToday(group.id)) continue;
+    }
+    // For interval groups: dedup is already handled inside getDueBroadcastGroups
 
     const post = db.pickRandomGroupPost(group);
     if (!post) {
@@ -149,7 +166,43 @@ async function processBroadcasts(api: Api) {
     }
 
     db.updateBroadcastGroup(group.id, { last_post_id: post.id });
-    db.incrementBroadcastGroupDaysSent(group.id);
+
+    // For non-interval: increment days_sent and log (one send per day)
+    // For interval: increment days_sent only after the LAST interval slot of the day
+    if (group.interval_minutes > 0) {
+      // Check if this is the last interval slot of the day
+      const isLastSlot = isLastIntervalSlot(group, currentTime, weekday);
+      if (isLastSlot) {
+        db.incrementBroadcastGroupDaysSent(group.id);
+      }
+    } else {
+      db.incrementBroadcastGroupDaysSent(group.id);
+    }
+
     db.logBroadcastSend(group.campaign_id, group.id, post.id);
   }
+}
+
+/** Check if the current time is the last interval slot for a broadcast group today */
+function isLastIntervalSlot(group: { send_time: string; interval_end: string | null; interval_minutes: number; schedule_type: string; schedule_value: string }, currentTime: string, weekday: number): boolean {
+  let startTime: string;
+  let endTime: string;
+
+  if (group.schedule_type === "detailed" && group.schedule_value) {
+    const rangeResult = db.getScheduleRangeForDay(group.schedule_value, weekday);
+    if (rangeResult) {
+      startTime = rangeResult.start;
+      endTime = rangeResult.end;
+    } else {
+      const singleTime = db.getScheduleTimeForDay(group.schedule_value, weekday);
+      startTime = singleTime || group.send_time;
+      endTime = group.interval_end || startTime;
+    }
+  } else {
+    startTime = group.send_time;
+    endTime = group.interval_end || startTime;
+  }
+
+  const times = db.getIntervalTimes(startTime, endTime, group.interval_minutes);
+  return times.length > 0 && times[times.length - 1] === currentTime;
 }

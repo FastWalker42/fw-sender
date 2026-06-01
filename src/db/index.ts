@@ -7,6 +7,8 @@ import type {
   BroadcastGroupPost,
   PlanPost,
 } from "../types";
+import type { ScheduleDay } from "tgwidget";
+import { parseSchedule } from "tgwidget";
 import { getJitterOffset, addMinutesToTime } from "../utils/jitter";
 
 const db = new Database("fw-sender.db", { create: true });
@@ -202,6 +204,23 @@ export function initDb() {
     db.exec("ALTER TABLE channels_new RENAME TO channels");
     console.log("[db] migrated: added message_thread_id to channels, updated UNIQUE constraint");
   }
+
+  // Migrate: add interval_minutes and interval_end columns to broadcast_groups
+  const bgColsNow = db.query("PRAGMA table_info(broadcast_groups)").all() as { name: string }[];
+  if (bgColsNow.length > 0 && !bgColsNow.some((c) => c.name === "interval_minutes")) {
+    db.exec("ALTER TABLE broadcast_groups ADD COLUMN interval_minutes INTEGER NOT NULL DEFAULT 0");
+    db.exec("ALTER TABLE broadcast_groups ADD COLUMN interval_end TEXT");
+    console.log("[db] migrated: added interval_minutes and interval_end to broadcast_groups");
+  }
+
+  // Migrate: add interval columns to plan_posts
+  const ppColsNow = db.query("PRAGMA table_info(plan_posts)").all() as { name: string }[];
+  if (ppColsNow.length > 0 && !ppColsNow.some((c) => c.name === "interval_minutes")) {
+    db.exec("ALTER TABLE plan_posts ADD COLUMN interval_minutes INTEGER NOT NULL DEFAULT 0");
+    db.exec("ALTER TABLE plan_posts ADD COLUMN interval_end_time TEXT");
+    db.exec("ALTER TABLE plan_posts ADD COLUMN interval_sent_count INTEGER NOT NULL DEFAULT 0");
+    console.log("[db] migrated: added interval_minutes, interval_end_time, interval_sent_count to plan_posts");
+  }
 }
 
 /* ═══════════════════════ Channels ══════════════════════════ */
@@ -335,7 +354,7 @@ export function addBroadcastGroup(
 
 export function updateBroadcastGroup(
   id: number,
-  f: Partial<Pick<BroadcastGroup, "send_time" | "schedule_type" | "schedule_value" | "total_days" | "days_sent" | "label" | "position" | "last_post_id">>,
+  f: Partial<Pick<BroadcastGroup, "send_time" | "schedule_type" | "schedule_value" | "total_days" | "days_sent" | "label" | "position" | "last_post_id" | "interval_minutes" | "interval_end">>,
 ) {
   const s: string[] = [];
   const v: (string | number | null)[] = [];
@@ -347,6 +366,8 @@ export function updateBroadcastGroup(
   if (f.label !== undefined) { s.push("label = ?"); v.push(f.label); }
   if (f.position !== undefined) { s.push("position = ?"); v.push(f.position); }
   if (f.last_post_id !== undefined) { s.push("last_post_id = ?"); v.push(f.last_post_id); }
+  if (f.interval_minutes !== undefined) { s.push("interval_minutes = ?"); v.push(f.interval_minutes); }
+  if (f.interval_end !== undefined) { s.push("interval_end = ?"); v.push(f.interval_end); }
   if (s.length === 0) return;
   v.push(id);
   db.query(`UPDATE broadcast_groups SET ${s.join(", ")} WHERE id = ?`).run(...v);
@@ -403,6 +424,18 @@ export function wasBroadcastGroupSentToday(groupId: number): boolean {
   return row !== null;
 }
 
+/** Check if a broadcast group was already sent at a specific time slot (HH:MM) today */
+export function wasBroadcastGroupSentAtTime(groupId: number, timeSlot: string): boolean {
+  const today = new Date().toISOString().slice(0, 10);
+  // Check if there's a log entry within the same minute (sent_at contains full datetime)
+  const start = `${today} ${timeSlot}:00`;
+  const end = `${today} ${timeSlot}:59`;
+  const row = db.query(
+    "SELECT 1 FROM broadcast_send_log WHERE group_id = ? AND sent_at >= ? AND sent_at <= ? LIMIT 1",
+  ).get(groupId, start, end) as { 1: number } | null;
+  return row !== null;
+}
+
 /** All due broadcast groups across all active campaigns for current time */
 export function getDueBroadcastGroups(currentTime: string, weekday: number): (BroadcastGroup & { channel_targets: ChannelTarget[] })[] {
   const today = new Date().toISOString().slice(0, 10);
@@ -419,6 +452,12 @@ export function getDueBroadcastGroups(currentTime: string, weekday: number): (Br
 
   // Filter by schedule (applying deterministic jitter)
   const due = rows.filter((bg) => {
+    // Interval mode: check if current time matches any interval slot
+    if (bg.interval_minutes > 0) {
+      return isDueForInterval(bg, currentTime, weekday, today);
+    }
+
+    // Non-interval mode (existing logic)
     let scheduledTime: string | null;
     if (bg.schedule_type === "detailed" && bg.schedule_value) {
       scheduledTime = getScheduleTimeForDay(bg.schedule_value, weekday);
@@ -436,6 +475,76 @@ export function getDueBroadcastGroups(currentTime: string, weekday: number): (Br
     const channels = getCampaignChannels(bg.campaign_id);
     return { ...bg, channel_targets: channels.map(toTarget) };
   });
+}
+
+/** Check if a broadcast group with interval is due at the current time */
+function isDueForInterval(bg: BroadcastGroup & { cmp_jitter?: number }, currentTime: string, weekday: number, today: string): boolean {
+  let startTime: string | null;
+  let endTime: string | null;
+
+  if (bg.schedule_type === "detailed" && bg.schedule_value) {
+    // Detailed mode: get start/end from range schedule (56-char) or single schedule (28-char)
+    const rangeResult = getScheduleRangeForDay(bg.schedule_value, weekday);
+    if (rangeResult) {
+      startTime = rangeResult.start;
+      endTime = rangeResult.end;
+    } else {
+      // Fallback to single time
+      startTime = getScheduleTimeForDay(bg.schedule_value, weekday);
+      endTime = bg.interval_end;
+    }
+  } else {
+    startTime = bg.send_time;
+    endTime = bg.interval_end;
+  }
+
+  if (!startTime || !endTime) return false;
+
+  // Apply jitter to start time
+  const offset = getJitterOffset(bg.id, today, bg.cmp_jitter || 0);
+  const jitteredStart = addMinutesToTime(startTime, offset);
+
+  // Generate all interval times and check if current time matches any
+  const intervalTimes = getIntervalTimes(jitteredStart, endTime, bg.interval_minutes);
+  if (!intervalTimes.includes(currentTime)) return false;
+
+  // Dedup: check if already sent at this specific time slot today
+  if (wasBroadcastGroupSentAtTime(bg.id, currentTime)) return false;
+
+  return true;
+}
+
+/** Get start/end times for a specific weekday from 56-char tgwidget range schedule */
+export function getScheduleRangeForDay(scheduleValue: string, jsWeekday: number): { start: string; end: string } | null {
+  if (scheduleValue.length !== 56) return null; // Not range format
+  const idx = jsWeekday === 0 ? 6 : jsWeekday - 1;
+  const offset = idx * 8;
+  const block = scheduleValue.slice(offset, offset + 8);
+  if (!block || block.length < 8 || block === "00000000") return null;
+  const startH = block.slice(0, 2);
+  const startM = block.slice(2, 4);
+  const endH = block.slice(4, 6);
+  const endM = block.slice(6, 8);
+  return { start: `${startH}:${startM}`, end: `${endH}:${endM}` };
+}
+
+/** Generate all HH:MM times from start to end at the given interval (in minutes) */
+export function getIntervalTimes(startTime: string, endTime: string, intervalMinutes: number): string[] {
+  if (intervalMinutes <= 0) return [startTime];
+  const [sh, sm] = startTime.split(":").map(Number) as [number, number];
+  const [eh, em] = endTime.split(":").map(Number) as [number, number];
+  let startMins = sh * 60 + sm;
+  const endMins = eh * 60 + em;
+  if (endMins <= startMins) return [startTime];
+
+  const times: string[] = [];
+  while (startMins <= endMins) {
+    const h = Math.floor(startMins / 60);
+    const m = startMins % 60;
+    times.push(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+    startMins += intervalMinutes;
+  }
+  return times;
 }
 
 /**
@@ -493,7 +602,7 @@ export function addPlanPost(campaignId: number, chatId: string, messageIds: numb
 
 export function updatePlanPost(
   id: number,
-  f: Partial<Pick<PlanPost, "send_date" | "send_time" | "is_auto_time" | "is_sent" | "label" | "position">>,
+  f: Partial<Pick<PlanPost, "send_date" | "send_time" | "is_auto_time" | "is_sent" | "label" | "position" | "interval_minutes" | "interval_end_time" | "interval_sent_count">>,
 ) {
   const s: string[] = [];
   const v: (string | number | null)[] = [];
@@ -503,6 +612,9 @@ export function updatePlanPost(
   if (f.is_sent !== undefined) { s.push("is_sent = ?"); v.push(f.is_sent); }
   if (f.label !== undefined) { s.push("label = ?"); v.push(f.label); }
   if (f.position !== undefined) { s.push("position = ?"); v.push(f.position); }
+  if (f.interval_minutes !== undefined) { s.push("interval_minutes = ?"); v.push(f.interval_minutes); }
+  if (f.interval_end_time !== undefined) { s.push("interval_end_time = ?"); v.push(f.interval_end_time); }
+  if (f.interval_sent_count !== undefined) { s.push("interval_sent_count = ?"); v.push(f.interval_sent_count); }
   if (s.length === 0) return;
   v.push(id);
   db.query(`UPDATE plan_posts SET ${s.join(", ")} WHERE id = ?`).run(...v);
@@ -514,6 +626,11 @@ export function removePlanPost(id: number) {
 
 export function markPlanPostSent(id: number) {
   db.query("UPDATE plan_posts SET is_sent = 1 WHERE id = ?").run(id);
+}
+
+/** Increment interval_sent_count for a plan post */
+export function incrementPlanPostIntervalSent(id: number) {
+  db.query("UPDATE plan_posts SET interval_sent_count = interval_sent_count + 1 WHERE id = ?").run(id);
 }
 
 /** All due plan posts across all active campaigns */
@@ -533,11 +650,22 @@ export function getAllDuePlanPosts(): (PlanPost & { channel_targets: ChannelTarg
     ORDER BY pp.send_date, pp.send_time
   `).all() as (PlanPost & { cmp_jitter: number })[];
 
-  // Filter: apply deterministic jitter to each post's send_time
+  // Filter: apply deterministic jitter and handle interval logic
   const due = rows.filter((pp) => {
     if (!pp.send_date || !pp.send_time) return false;
     const offset = getJitterOffset(pp.id, pp.send_date, pp.cmp_jitter || 0);
     const jitteredTime = addMinutesToTime(pp.send_time, offset);
+
+    // Interval mode: check if current time matches an interval slot
+    if (pp.interval_minutes > 0 && pp.interval_end_time) {
+      if (pp.send_date < date) return true;
+      if (pp.send_date > date) return false;
+      // Today: check if current time is in an interval slot
+      const intervalTimes = getIntervalTimes(jitteredTime, pp.interval_end_time, pp.interval_minutes);
+      return intervalTimes.includes(time);
+    }
+
+    // Non-interval mode (existing logic)
     // Due if date is in the past, or today and jittered time has arrived
     if (pp.send_date < date) return true;
     if (pp.send_date === date && jitteredTime <= time) return true;
@@ -557,6 +685,13 @@ export function getActiveCampaigns(): (Campaign & { channel_targets: ChannelTarg
     ...c,
     channel_targets: getCampaignChannels(c.id).map(toTarget),
   }));
+}
+
+/** Check if a plan post's interval sends are all complete */
+export function isPlanPostIntervalComplete(pp: PlanPost): boolean {
+  if (pp.interval_minutes <= 0 || !pp.interval_end_time || !pp.send_time) return false;
+  const intervalTimes = getIntervalTimes(pp.send_time, pp.interval_end_time, pp.interval_minutes);
+  return pp.interval_sent_count >= intervalTimes.length;
 }
 
 /** Parse message_ids from JSON string, falling back to legacy message_id field */

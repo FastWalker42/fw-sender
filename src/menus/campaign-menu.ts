@@ -180,7 +180,8 @@ export async function showBroadcastGroups(ctx: BotContext, cmpId: number, edit =
     const remaining = g.total_days - g.days_sent;
     const postCount = db.countBroadcastGroupPosts(g.id);
     const timeLabel = g.schedule_type === "detailed" ? "расп." : g.send_time;
-    kb.text(`${g.label} (${timeLabel}, ${remaining} дн., ${postCount} пост.)`, `bg:${g.id}`).icon(E.PACKAGE).row();
+    const intervalLabel = g.interval_minutes > 0 ? ` ⏱${g.interval_minutes}м` : "";
+    kb.text(`${g.label} (${timeLabel}${intervalLabel}, ${remaining} дн., ${postCount} пост.)`, `bg:${g.id}`).icon(E.PACKAGE).row();
   }
   kb.text("Создать группу постов", `bg:add:${cmpId}`).icon(E.ADD).row();
   kb.text("Назад", `cmp:${cmpId}`).icon(E.BACK).row();
@@ -205,6 +206,9 @@ export async function showBroadcastGroupDetail(ctx: BotContext, groupId: number)
   const posts = db.getBroadcastGroupPosts(groupId);
   const remaining = group.total_days - group.days_sent;
   const scheduleText = formatGroupSchedule(group);
+  const intervalText = group.interval_minutes > 0
+    ? `\n${e("🔄", E.SCHEDULE)} Интервал: каждые ${group.interval_minutes} мин.`
+    : "";
 
   const text = [
     `${e("📦", E.PACKAGE)} <b>${group.label}</b>`,
@@ -212,13 +216,16 @@ export async function showBroadcastGroupDetail(ctx: BotContext, groupId: number)
     `Позиция: ${group.position + 1}`,
     `${e("🕓", E.SCHEDULE)} ${scheduleText}`,
     `Осталось дней: ${remaining}`,
-    `Постов в группе: ${posts.length}`,
+    `Постов в группе: ${posts.length}${intervalText}`,
   ].join("\n");
 
+  const intervalLabel = group.interval_minutes > 0 ? "Интервал ✓" : "Интервал";
   const kb = new InlineKeyboard()
     .text(`Посты (${posts.length})`, `bgp:list:${groupId}`).icon(E.FILE)
     .row()
     .text("Изменить время", `bg:time:${groupId}`).icon(E.SCHEDULE)
+    .text(intervalLabel, `bg:interval:${groupId}`).icon(E.SCHEDULE)
+    .row()
     .text(`Дни: ${remaining}`, `bg:days:${groupId}`).icon(E.PANEL)
     .row()
     .text("Добавить пост", `bgp:add:${groupId}`).icon(E.ADD)
@@ -320,8 +327,9 @@ export async function showPlanPosts(ctx: BotContext, cmpId: number, edit = true)
       : p.send_time
         ? `${p.send_date || "?"} ${p.send_time}`
         : "";
+    const intervalSuffix = p.interval_minutes > 0 ? ` ⏱${p.interval_minutes}м` : "";
     const icon = p.is_auto_time ? E.ROBOT : E.SCHEDULE;
-    const label = tl ? `${tl} ${p.label}` : p.label;
+    const label = tl ? `${tl}${intervalSuffix} ${p.label}` : `${p.label}${intervalSuffix}`;
     kb.text(label, `pp:${p.id}`).icon(icon).row();
   }
   kb.text("Добавить пост", `pp:add:${cmpId}`).icon(E.ADD).row();
@@ -373,18 +381,24 @@ export async function showPlanPostDetail(ctx: BotContext, postId: number) {
 
   const encIds = encodePreviewIds(previewMsgIds);
 
+  const intervalText = post.interval_minutes > 0
+    ? `\n${e("🔄", E.SCHEDULE)} Интервал: каждые ${post.interval_minutes} мин. до ${post.interval_end_time || "?"}${post.interval_sent_count > 0 ? ` (отправлено ${post.interval_sent_count} раз)` : ""}`
+    : "";
+
   const text = [
     `${e("📁", E.FILE)} <b>${post.label}</b>`,
     "",
     `${e("🕓", E.SCHEDULE)} Дата: ${post.send_date || "не задана"}`,
     `${e("🕓", E.SCHEDULE)} Время: ${post.send_time || (post.is_auto_time ? `авто (${cmp?.default_time || "12:00"})` : "не задано")}`,
-    `Статус: ${post.is_sent ? `${e("✅", E.ACTIVE)} Отправлен` : `${e("🕓", E.SCHEDULE)} В очереди`}`,
+    `Статус: ${post.is_sent ? `${e("✅", E.ACTIVE)} Отправлен` : `${e("🕓", E.SCHEDULE)} В очереди`}${intervalText}`,
   ].join("\n");
 
+  const intervalLabel = post.interval_minutes > 0 ? "Интервал ✓" : "Интервал";
   const kb = new InlineKeyboard()
     .text("Дата и время", `pp:datetime:${postId}:${encIds}`).icon(E.SCHEDULE)
     .row()
     .text(post.is_auto_time ? "АВТО ✓" : "АВТО", `pp:auto:${postId}:${encIds}`).icon(E.ROBOT)
+    .text(intervalLabel, `pp:interval:${postId}:${encIds}`).icon(E.SCHEDULE)
     .row();
   kb.text("Удалить", `pp:del:${postId}:${encIds}`).icon(E.DELETE).row();
   kb.text("Назад", `pp:back:${post.campaign_id}:${encIds}`).icon(E.BACK).row();

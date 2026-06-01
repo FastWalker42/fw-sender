@@ -15,6 +15,8 @@ import {
   defaultTimeConversation,
   planDatetimeConversation,
   broadcastGroupTimeConversation,
+  broadcastGroupIntervalConversation,
+  planPostIntervalConversation,
 } from "./conversations/date-time";
 
 // Init database
@@ -40,6 +42,8 @@ bot.use(createConversation(scheduleConversation));
 bot.use(createConversation(defaultTimeConversation));
 bot.use(createConversation(planDatetimeConversation));
 bot.use(createConversation(broadcastGroupTimeConversation));
+bot.use(createConversation(broadcastGroupIntervalConversation));
+bot.use(createConversation(planPostIntervalConversation));
 
 // Ignore channel_post updates — the bot must not react to posts in managed channels
 bot.on("channel_post", () => {});

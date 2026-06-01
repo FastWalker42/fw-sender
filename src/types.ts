@@ -48,8 +48,12 @@ export interface BroadcastGroup {
   send_time: string;
   /** 'simple' = same time every day; 'detailed' = per-weekday tgwidget schedule */
   schedule_type: "simple" | "detailed";
-  /** For detailed mode: 28-char tgwidget single schedule string */
+  /** For detailed mode: 28-char (single) or 56-char (range) tgwidget schedule string */
   schedule_value: string;
+  /** Interval between sends in minutes. 0 = single send at scheduled time */
+  interval_minutes: number;
+  /** End time for interval mode (HH:MM). Used when interval_minutes > 0 and schedule_type = "simple" */
+  interval_end: string | null;
   total_days: number;
   days_sent: number;
   last_post_id: number | null;
@@ -90,6 +94,12 @@ export interface PlanPost {
   send_date: string | null;
   send_time: string | null;
   is_auto_time: number;
+  /** Interval between sends in minutes. 0 = single send at scheduled time */
+  interval_minutes: number;
+  /** End time for interval mode (HH:MM). Used when interval_minutes > 0 */
+  interval_end_time: string | null;
+  /** How many interval sends have been completed for this post */
+  interval_sent_count: number;
   is_sent: number;
   position: number;
   created_at: string;
