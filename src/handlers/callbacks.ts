@@ -300,6 +300,25 @@ export async function handleCallback(ctx: BotContext) {
     return showBroadcastGroups(ctx, group.campaign_id);
   }
 
+  if (data.startsWith("bg:export:")) {
+    const groupId = parseId(data, 2);
+    const group = db.getBroadcastGroup(groupId);
+    if (!group) return;
+    const posts = db.getBroadcastGroupPosts(groupId);
+    const adminId = ctx.from!.id;
+    for (const post of posts) {
+      const messageIds = db.parseMessageIds(post);
+      try {
+        if (messageIds.length === 1) {
+          await ctx.api.copyMessage(adminId, parseInt(post.chat_id), messageIds[0]!);
+        } else {
+          await ctx.api.copyMessages(adminId, parseInt(post.chat_id), messageIds);
+        }
+      } catch {}
+    }
+    return;
+  }
+
   if (data.startsWith("bg:")) {
     const id = parseId(data, 1);
     if (!isNaN(id)) return showBroadcastGroupDetail(ctx, id);
