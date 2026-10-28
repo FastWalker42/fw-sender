@@ -51,11 +51,11 @@ async function sendToChannel(api: Api, target: ChannelTarget, fromChatId: string
   if (userbot.isLoggedIn() && userbot.isBotRelayReady()) {
     const ubId = userbot.getUserbotId();
     if (ubId) {
-      // 1. Bot copies the post(s) to userbot's DM
+      // 1. Bot forwards the post(s) to userbot's DM
       if (messageIds.length === 1) {
-        await api.copyMessage(ubId, parseInt(fromChatId), messageIds[0]!);
+        await api.forwardMessage(ubId, parseInt(fromChatId), messageIds[0]!);
       } else {
-        await api.copyMessages(ubId, parseInt(fromChatId), messageIds);
+        await api.forwardMessages(ubId, parseInt(fromChatId), messageIds);
       }
       // 2. Userbot gets latest msg(s) from bot DM and forwards to channel/topic
       await userbot.relayViaBot(target.chat_id, messageIds.length, threadId);
